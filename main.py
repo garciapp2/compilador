@@ -17,18 +17,6 @@ def main():
     while i < n and s[i] == ' ':
         i += 1
 
-    if i >= n:
-        raise Exception("Expressão vazia")
-
-    if s[i] == '+':
-        i += 1
-    elif s[i] == '-':
-        sinal = -1
-        i += 1
-
-    while i < n and s[i] == ' ':
-        i += 1
-
     if i >= n or not s[i].isdigit():
         raise Exception("Esperado número no início")
 
