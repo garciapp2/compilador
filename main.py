@@ -37,6 +37,11 @@ class Lexer:
             self.position += 1
             return
 
+        if current == '!':
+            self.next = Token("FACT", '!')
+            self.position += 1
+            return
+
         if current.isdigit():
             num = ""
             while self.position < n and s[self.position].isdigit():
@@ -52,28 +57,53 @@ class Parser:
     lexer = None
 
     @staticmethod
-    def parse_expression():
-        # Deve começar com INT
+    def factorial(n):
+        if n < 0:
+            raise Exception("[Semantic] Factorial of negative number")
+        result = 1
+        for i in range(2, n + 1):
+            result *= i
+        return result
+
+    @staticmethod
+    def parse_number_with_factorial():
         if Parser.lexer.next.type != "INT":
             raise Exception("[Parser] Expected INT")
 
-        result = Parser.lexer.next.value
+        value = Parser.lexer.next.value
         Parser.lexer.select_next()
 
-        # (+ INT | - INT)*
+        # Aplica ! quantas vezes aparecer
+        while Parser.lexer.next.type == "FACT":
+            value = Parser.factorial(value)
+            Parser.lexer.select_next()
+
+        return value
+
+    @staticmethod
+    def parse_expression():
+        sign = 1
+
+        # Suporte a unário -
+        if Parser.lexer.next.type == "MINUS":
+            sign = -1
+            Parser.lexer.select_next()
+        elif Parser.lexer.next.type == "PLUS":
+            Parser.lexer.select_next()
+
+        result = sign * Parser.parse_number_with_factorial()
+
+        # (+ num | - num)*
         while Parser.lexer.next.type in ("PLUS", "MINUS"):
             op = Parser.lexer.next.type
             Parser.lexer.select_next()
 
-            if Parser.lexer.next.type != "INT":
-                raise Exception("[Parser] Expected INT after operator")
+            value = Parser.parse_number_with_factorial()
 
             if op == "PLUS":
-                result += Parser.lexer.next.value
+                result += value
             else:
-                result -= Parser.lexer.next.value
-
-            Parser.lexer.select_next()
+                result -= value
 
         return result
 
