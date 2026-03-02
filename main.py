@@ -24,24 +24,29 @@ class Lexer:
             self.next = Token("EOF", "")
             return
 
-        current = s[self.position]
+        c = s[self.position]
 
-        if current == '+':
-            self.next = Token("PLUS", '+')
+        if c == '+':
+            self.next = Token("PLUS", c)
             self.position += 1
             return
 
-        if current == '-':
-            self.next = Token("MINUS", '-')
+        if c == '-':
+            self.next = Token("MINUS", c)
             self.position += 1
             return
 
-        if current == '^':
-            self.next = Token("XOR", '^')
+        if c == '^':
+            self.next = Token("XOR", c)
             self.position += 1
             return
 
-        if current.isdigit():
+        if c == '!':
+            self.next = Token("FACT", c)
+            self.position += 1
+            return
+
+        if c.isdigit():
             num = ""
             while self.position < n and s[self.position].isdigit():
                 num += s[self.position]
@@ -49,7 +54,7 @@ class Lexer:
             self.next = Token("INT", int(num))
             return
 
-        raise Exception("[Parser] Invalid symbol")
+        raise Exception("[Parser] error")
 
 
 class Parser:
@@ -73,21 +78,48 @@ class Parser:
 
     @staticmethod
     def parse_xor():
-        if Parser.lexer.next.type != "INT":
-            raise Exception("[Parser] error")
-
-        result = Parser.lexer.next.value
-        Parser.lexer.select_next()
+        result = Parser.parse_unary()
 
         while Parser.lexer.next.type == "XOR":
             Parser.lexer.select_next()
+            value = Parser.parse_unary()
+            result ^= value
 
-            if Parser.lexer.next.type != "INT":
+        return result
+
+    @staticmethod
+    def parse_unary():
+        if Parser.lexer.next.type == "PLUS":
+            Parser.lexer.select_next()
+            return Parser.parse_unary()
+
+        if Parser.lexer.next.type == "MINUS":
+            Parser.lexer.select_next()
+            return -Parser.parse_unary()
+
+        return Parser.parse_factorial()
+
+    @staticmethod
+    def parse_factorial():
+        if Parser.lexer.next.type != "INT":
+            raise Exception("[Parser] error")
+
+        value = Parser.lexer.next.value
+        Parser.lexer.select_next()
+
+        while Parser.lexer.next.type == "FACT":
+            if value < 0:
                 raise Exception("[Parser] error")
-
-            result ^= Parser.lexer.next.value
+            value = Parser.factorial(value)
             Parser.lexer.select_next()
 
+        return value
+
+    @staticmethod
+    def factorial(n):
+        result = 1
+        for i in range(2, n + 1):
+            result *= i
         return result
 
     @staticmethod
@@ -105,12 +137,12 @@ class Parser:
 
 def main():
     if len(sys.argv) != 2:
-        raise Exception("[Parser] Usage")
+        raise Exception("[Parser] error")
 
     code = sys.argv[1]
 
     if not code or code.isspace():
-        raise Exception("[Parser] Empty input")
+        raise Exception("[Parser] error")
 
     result = Parser.run(code)
     print(result)
