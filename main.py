@@ -158,7 +158,7 @@ def main():
     code = sys.argv[1]
 
     if not code or code.isspace():
-        raise Exception("[Lexer] Empty input")
+        raise Exception("[Parser] Empty input")
 
     result = Parser.run(code)
     print(result)
