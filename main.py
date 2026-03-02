@@ -17,7 +17,6 @@ class Lexer:
         s = self.source
         n = len(s)
 
-        # Ignora espaços
         while self.position < n and s[self.position] == ' ':
             self.position += 1
 
@@ -37,8 +36,8 @@ class Lexer:
             self.position += 1
             return
 
-        if current == '!':
-            self.next = Token("FACT", '!')
+        if current == '^':
+            self.next = Token("XOR", '^')
             self.position += 1
             return
 
@@ -50,60 +49,44 @@ class Lexer:
             self.next = Token("INT", int(num))
             return
 
-        raise Exception(f"[Lexer] Invalid symbol: {current}")
+        raise Exception("[Parser] Invalid symbol")
 
 
 class Parser:
     lexer = None
 
     @staticmethod
-    def factorial(n):
-        if n < 0:
-            raise Exception("[Semantic] Factorial of negative number")
-        result = 1
-        for i in range(2, n + 1):
-            result *= i
-        return result
-
-    @staticmethod
-    def parse_number_with_factorial():
-        if Parser.lexer.next.type != "INT":
-            raise Exception("[Parser] Expected INT")
-
-        value = Parser.lexer.next.value
-        Parser.lexer.select_next()
-
-        # Aplica ! quantas vezes aparecer
-        while Parser.lexer.next.type == "FACT":
-            value = Parser.factorial(value)
-            Parser.lexer.select_next()
-
-        return value
-
-    @staticmethod
     def parse_expression():
-        sign = 1
+        result = Parser.parse_xor()
 
-        # Suporte a unário -
-        if Parser.lexer.next.type == "MINUS":
-            sign = -1
-            Parser.lexer.select_next()
-        elif Parser.lexer.next.type == "PLUS":
-            Parser.lexer.select_next()
-
-        result = sign * Parser.parse_number_with_factorial()
-
-        # (+ num | - num)*
         while Parser.lexer.next.type in ("PLUS", "MINUS"):
             op = Parser.lexer.next.type
             Parser.lexer.select_next()
-
-            value = Parser.parse_number_with_factorial()
+            value = Parser.parse_xor()
 
             if op == "PLUS":
                 result += value
             else:
                 result -= value
+
+        return result
+
+    @staticmethod
+    def parse_xor():
+        if Parser.lexer.next.type != "INT":
+            raise Exception("[Parser] error")
+
+        result = Parser.lexer.next.value
+        Parser.lexer.select_next()
+
+        while Parser.lexer.next.type == "XOR":
+            Parser.lexer.select_next()
+
+            if Parser.lexer.next.type != "INT":
+                raise Exception("[Parser] error")
+
+            result ^= Parser.lexer.next.value
+            Parser.lexer.select_next()
 
         return result
 
@@ -115,14 +98,14 @@ class Parser:
         result = Parser.parse_expression()
 
         if Parser.lexer.next.type != "EOF":
-            raise Exception("[Parser] Unexpected token")
+            raise Exception("[Parser] error")
 
         return result
 
 
 def main():
     if len(sys.argv) != 2:
-        raise Exception("[Parser] Usage: python main.py 'expressao'")
+        raise Exception("[Parser] Usage")
 
     code = sys.argv[1]
 
