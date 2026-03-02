@@ -51,27 +51,33 @@ class Parser:
 
     @staticmethod
     def parse_expression():
-        if Parser.lexer.next.type != "INT":
-            raise Exception("[Parser] Expected INT")
-
-        result = Parser.lexer.next.value
-        Parser.lexer.select_next()
+        result = Parser.parse_term()
 
         while Parser.lexer.next.type in ("PLUS", "MINUS"):
             op = Parser.lexer.next.type
             Parser.lexer.select_next()
 
-            if Parser.lexer.next.type != "INT":
-                raise Exception("[Parser] Expected INT after operator")
+            value = Parser.parse_term()
 
             if op == "PLUS":
-                result += Parser.lexer.next.value
+                result += value
             else:
-                result -= Parser.lexer.next.value
-
-            Parser.lexer.select_next()
+                result -= value
 
         return result
+
+    @staticmethod
+    def parse_term():
+        return Parser.parse_factor()
+
+    @staticmethod
+    def parse_factor():
+        if Parser.lexer.next.type != "INT":
+            raise Exception("[Parser] Expected INT")
+
+        value = Parser.lexer.next.value
+        Parser.lexer.select_next()
+        return value
 
     @staticmethod
     def run(code):
