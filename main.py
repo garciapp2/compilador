@@ -37,26 +37,6 @@ class Lexer:
             self.position += 1
             return
 
-        if current == '*':
-            self.next = Token("MULT", '*')
-            self.position += 1
-            return
-
-        if current == '/':
-            self.next = Token("DIV", '/')
-            self.position += 1
-            return
-
-        if current == '(':
-            self.next = Token("LPAREN", '(')
-            self.position += 1
-            return
-
-        if current == ')':
-            self.next = Token("RPAREN", ')')
-            self.position += 1
-            return
-
         if current.isdigit():
             num = ""
             while self.position < n and s[self.position].isdigit():
@@ -73,70 +53,29 @@ class Parser:
 
     @staticmethod
     def parse_expression():
-        result = Parser.parse_term()
+        # Deve começar com INT
+        if Parser.lexer.next.type != "INT":
+            raise Exception("[Parser] Expected INT")
 
+        result = Parser.lexer.next.value
+        Parser.lexer.select_next()
+
+        # (+ INT | - INT)*
         while Parser.lexer.next.type in ("PLUS", "MINUS"):
             op = Parser.lexer.next.type
             Parser.lexer.select_next()
-            value = Parser.parse_term()
+
+            if Parser.lexer.next.type != "INT":
+                raise Exception("[Parser] Expected INT after operator")
 
             if op == "PLUS":
-                result += value
+                result += Parser.lexer.next.value
             else:
-                result -= value
+                result -= Parser.lexer.next.value
+
+            Parser.lexer.select_next()
 
         return result
-
-    @staticmethod
-    def parse_term():
-        result = Parser.parse_factor()
-
-        while Parser.lexer.next.type in ("MULT", "DIV"):
-            op = Parser.lexer.next.type
-            Parser.lexer.select_next()
-            value = Parser.parse_factor()
-
-            if op == "MULT":
-                result *= value
-            else:
-                if value == 0:
-                    raise Exception("[Semantic] Division by zero")
-                result //= value
-
-        return result
-
-    @staticmethod
-    def parse_factor():
-        token = Parser.lexer.next
-
-        # Unary +
-        if token.type == "PLUS":
-            Parser.lexer.select_next()
-            return Parser.parse_factor()
-
-        # Unary -
-        if token.type == "MINUS":
-            Parser.lexer.select_next()
-            return -Parser.parse_factor()
-
-        # Número
-        if token.type == "INT":
-            value = token.value
-            Parser.lexer.select_next()
-            return value
-
-        # Parênteses
-        if token.type == "LPAREN":
-            Parser.lexer.select_next()
-            result = Parser.parse_expression()
-
-            if Parser.lexer.next.type != "RPAREN":
-                raise Exception("[Parser] Missing )")
-
-            Parser.lexer.select_next()
-            return result
-
-        raise Exception("[Parser] Unexpected token")
 
     @staticmethod
     def run(code):
@@ -146,7 +85,7 @@ class Parser:
         result = Parser.parse_expression()
 
         if Parser.lexer.next.type != "EOF":
-            raise Exception("[Parser] Unexpected token after expression")
+            raise Exception("[Parser] Unexpected token")
 
         return result
 
