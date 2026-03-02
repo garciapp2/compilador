@@ -82,7 +82,19 @@ class Parser:
 
         while Parser.lexer.next.type == "XOR":
             Parser.lexer.select_next()
-            value = Parser.parse_unary()
+
+            if Parser.lexer.next.type != "INT":
+                raise Exception("[Parser] error")
+
+            value = Parser.lexer.next.value
+            Parser.lexer.select_next()
+
+            while Parser.lexer.next.type == "FACT":
+                if value < 0:
+                    raise Exception("[Parser] error")
+                value = Parser.factorial(value)
+                Parser.lexer.select_next()
+
             result ^= value
 
         return result
