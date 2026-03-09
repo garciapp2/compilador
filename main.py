@@ -24,48 +24,43 @@ class Lexer:
             self.next = Token("EOF", "")
             return
 
-        c = s[self.position]
+        current = s[self.position]
 
-        if c == '*':
+        if current == '*':
             if self.position + 1 < n and s[self.position + 1] == '*':
                 self.next = Token("POWER", "**")
                 self.position += 2
             else:
-                self.next = Token("MULT", "*")
+                self.next = Token("MULT", '*')
                 self.position += 1
             return
 
-        if c == '+':
-            self.next = Token("PLUS", c)
+        if current == '+':
+            self.next = Token("PLUS", '+')
             self.position += 1
             return
 
-        if c == '-':
-            self.next = Token("MINUS", c)
+        if current == '-':
+            self.next = Token("MINUS", '-')
             self.position += 1
             return
 
-        if c == '^':
-            self.next = Token("XOR", c)
+        if current == '/':
+            self.next = Token("DIV", '/')
             self.position += 1
             return
 
-        if c == '!':
-            self.next = Token("FACT", c)
+        if current == '(':
+            self.next = Token("LPAREN", '(')
             self.position += 1
             return
 
-        if c == '(':
-            self.next = Token("LPAREN", c)
+        if current == ')':
+            self.next = Token("RPAREN", ')')
             self.position += 1
             return
 
-        if c == ')':
-            self.next = Token("RPAREN", c)
-            self.position += 1
-            return
-
-        if c.isdigit():
+        if current.isdigit():
             num = ""
             while self.position < n and s[self.position].isdigit():
                 num += s[self.position]
@@ -73,7 +68,7 @@ class Lexer:
             self.next = Token("INT", int(num))
             return
 
-        raise Exception("[Parser] error")
+        raise Exception(f"[Lexer] Invalid symbol: {current}")
 
 
 class Parser:
@@ -81,12 +76,12 @@ class Parser:
 
     @staticmethod
     def parse_expression():
-        result = Parser.parse_xor()
+        result = Parser.parse_term()
 
         while Parser.lexer.next.type in ("PLUS", "MINUS"):
             op = Parser.lexer.next.type
             Parser.lexer.select_next()
-            value = Parser.parse_xor()
+            value = Parser.parse_term()
 
             if op == "PLUS":
                 result += value
@@ -96,13 +91,20 @@ class Parser:
         return result
 
     @staticmethod
-    def parse_xor():
+    def parse_term():
         result = Parser.parse_unary()
 
-        while Parser.lexer.next.type == "XOR":
+        while Parser.lexer.next.type in ("MULT", "DIV"):
+            op = Parser.lexer.next.type
             Parser.lexer.select_next()
             value = Parser.parse_unary()
-            result ^= value
+
+            if op == "MULT":
+                result *= value
+            else:
+                if value == 0:
+                    raise Exception("[Semantic] Division by zero")
+                result //= value
 
         return result
 
@@ -120,50 +122,38 @@ class Parser:
 
     @staticmethod
     def parse_power():
-        result = Parser.parse_factorial()
+        result = Parser.parse_atom()
 
         if Parser.lexer.next.type == "POWER":
             Parser.lexer.select_next()
-            value = Parser.parse_unary()
+            # Note: Unário tem precedência MENOR que potência.
+            # Chamamos parse_power novamente caso queira associatividade à direita.
+            # Para o comportamento solicitado (-3**2 = -9), o unário chama a potência.
+            value = Parser.parse_power()
             result = result ** value
 
         return result
 
     @staticmethod
-    def parse_factorial():
-        result = Parser.parse_factor()
+    def parse_atom():
+        token = Parser.lexer.next
 
-        while Parser.lexer.next.type == "FACT":
-            if result < 0:
-                raise Exception("[Parser] error")
-            result = Parser.factorial(result)
-            Parser.lexer.select_next()
-
-        return result
-
-    @staticmethod
-    def parse_factor():
-        if Parser.lexer.next.type == "INT":
-            value = Parser.lexer.next.value
+        if token.type == "INT":
+            value = token.value
             Parser.lexer.select_next()
             return value
 
-        if Parser.lexer.next.type == "LPAREN":
+        if token.type == "LPAREN":
             Parser.lexer.select_next()
             result = Parser.parse_expression()
+
             if Parser.lexer.next.type != "RPAREN":
-                raise Exception("[Parser] error")
+                raise Exception("[Parser] Missing )")
+
             Parser.lexer.select_next()
             return result
 
-        raise Exception("[Parser] error")
-
-    @staticmethod
-    def factorial(n):
-        res = 1
-        for i in range(2, n + 1):
-            res *= i
-        return res
+        raise Exception("[Parser] Unexpected token")
 
     @staticmethod
     def run(code):
@@ -173,19 +163,19 @@ class Parser:
         result = Parser.parse_expression()
 
         if Parser.lexer.next.type != "EOF":
-            raise Exception("[Parser] error")
+            raise Exception("[Parser] Unexpected token after expression")
 
         return result
 
 
 def main():
     if len(sys.argv) != 2:
-        raise Exception("[Parser] error")
+        raise Exception("[Parser] Usage: python main.py 'expressao'")
 
     code = sys.argv[1]
 
     if not code or code.isspace():
-        raise Exception("[Parser] error")
+        raise Exception("[Parser] Empty input")
 
     result = Parser.run(code)
     print(result)
