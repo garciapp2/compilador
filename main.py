@@ -26,6 +26,15 @@ class Lexer:
 
         c = s[self.position]
 
+        if c == '*':
+            if self.position + 1 < n and s[self.position + 1] == '*':
+                self.next = Token("POWER", "**")
+                self.position += 2
+            else:
+                self.next = Token("MULT", "*")
+                self.position += 1
+            return
+
         if c == '+':
             self.next = Token("PLUS", c)
             self.position += 1
@@ -43,6 +52,16 @@ class Lexer:
 
         if c == '!':
             self.next = Token("FACT", c)
+            self.position += 1
+            return
+
+        if c == '(':
+            self.next = Token("LPAREN", c)
+            self.position += 1
+            return
+
+        if c == ')':
+            self.next = Token("RPAREN", c)
             self.position += 1
             return
 
@@ -82,19 +101,7 @@ class Parser:
 
         while Parser.lexer.next.type == "XOR":
             Parser.lexer.select_next()
-
-            if Parser.lexer.next.type != "INT":
-                raise Exception("[Parser] error")
-
-            value = Parser.lexer.next.value
-            Parser.lexer.select_next()
-
-            while Parser.lexer.next.type == "FACT":
-                if value < 0:
-                    raise Exception("[Parser] error")
-                value = Parser.factorial(value)
-                Parser.lexer.select_next()
-
+            value = Parser.parse_unary()
             result ^= value
 
         return result
@@ -109,30 +116,54 @@ class Parser:
             Parser.lexer.select_next()
             return -Parser.parse_unary()
 
-        return Parser.parse_factorial()
+        return Parser.parse_power()
+
+    @staticmethod
+    def parse_power():
+        result = Parser.parse_factorial()
+
+        if Parser.lexer.next.type == "POWER":
+            Parser.lexer.select_next()
+            value = Parser.parse_unary()
+            result = result ** value
+
+        return result
 
     @staticmethod
     def parse_factorial():
-        if Parser.lexer.next.type != "INT":
-            raise Exception("[Parser] error")
-
-        value = Parser.lexer.next.value
-        Parser.lexer.select_next()
+        result = Parser.parse_factor()
 
         while Parser.lexer.next.type == "FACT":
-            if value < 0:
+            if result < 0:
                 raise Exception("[Parser] error")
-            value = Parser.factorial(value)
+            result = Parser.factorial(result)
             Parser.lexer.select_next()
 
-        return value
+        return result
+
+    @staticmethod
+    def parse_factor():
+        if Parser.lexer.next.type == "INT":
+            value = Parser.lexer.next.value
+            Parser.lexer.select_next()
+            return value
+
+        if Parser.lexer.next.type == "LPAREN":
+            Parser.lexer.select_next()
+            result = Parser.parse_expression()
+            if Parser.lexer.next.type != "RPAREN":
+                raise Exception("[Parser] error")
+            Parser.lexer.select_next()
+            return result
+
+        raise Exception("[Parser] error")
 
     @staticmethod
     def factorial(n):
-        result = 1
+        res = 1
         for i in range(2, n + 1):
-            result *= i
-        return result
+            res *= i
+        return res
 
     @staticmethod
     def run(code):
