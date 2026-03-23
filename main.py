@@ -1,10 +1,62 @@
 import sys
+from abc import ABC, abstractmethod
 
 
 class Token:
     def __init__(self, type_, value):
         self.type = type_
         self.value = value
+
+
+class Node(ABC):
+    def __init__(self, value, children=None):
+        self.value = value
+        self.children = children or []
+
+    @abstractmethod
+    def evaluate(self):
+        pass
+
+
+class IntVal(Node):
+    def __init__(self, value, children=None):
+        super().__init__(value, children or [])
+
+    def evaluate(self):
+        return self.value
+
+
+class UnOp(Node):
+    def __init__(self, value, children=None):
+        super().__init__(value, children or [])
+
+    def evaluate(self):
+        child_val = self.children[0].evaluate()
+        if self.value == "+":
+            return child_val
+        if self.value == "-":
+            return -child_val
+        raise Exception("[Semantic] Unknown unary operator")
+
+
+class BinOp(Node):
+    def __init__(self, value, children=None):
+        super().__init__(value, children or [])
+
+    def evaluate(self):
+        left_val = self.children[0].evaluate()
+        right_val = self.children[1].evaluate()
+        if self.value == "+":
+            return left_val + right_val
+        if self.value == "-":
+            return left_val - right_val
+        if self.value == "*":
+            return left_val * right_val
+        if self.value == "/":
+            if right_val == 0:
+                raise Exception("[Semantic] Division by zero")
+            return left_val // right_val
+        raise Exception("[Semantic] Unknown binary operator")
 
 
 class Lexer:
@@ -17,7 +69,6 @@ class Lexer:
         s = self.source
         n = len(s)
 
-        # Ignora espaços
         while self.position < n and s[self.position] == ' ':
             self.position += 1
 
@@ -65,7 +116,7 @@ class Lexer:
             self.next = Token("INT", int(num))
             return
 
-        raise Exception(f"[Lexer] Invalid symbol: {current}")
+        raise Exception("[Lexer] Invalid symbol")
 
 
 class Parser:
@@ -73,68 +124,56 @@ class Parser:
 
     @staticmethod
     def parse_expression():
-        result = Parser.parse_term()
+        node = Parser.parse_term()
 
         while Parser.lexer.next.type in ("PLUS", "MINUS"):
-            op = Parser.lexer.next.type
+            op = "+" if Parser.lexer.next.type == "PLUS" else "-"
             Parser.lexer.select_next()
-            value = Parser.parse_term()
+            right = Parser.parse_term()
+            node = BinOp(op, [node, right])
 
-            if op == "PLUS":
-                result += value
-            else:
-                result -= value
-
-        return result
+        return node
 
     @staticmethod
     def parse_term():
-        result = Parser.parse_factor()
+        node = Parser.parse_factor()
 
         while Parser.lexer.next.type in ("MULT", "DIV"):
-            op = Parser.lexer.next.type
+            op = "*" if Parser.lexer.next.type == "MULT" else "/"
             Parser.lexer.select_next()
-            value = Parser.parse_factor()
+            right = Parser.parse_factor()
+            node = BinOp(op, [node, right])
 
-            if op == "MULT":
-                result *= value
-            else:
-                if value == 0:
-                    raise Exception("[Semantic] Division by zero")
-                result //= value
-
-        return result
+        return node
 
     @staticmethod
     def parse_factor():
         token = Parser.lexer.next
 
-        # Unary +
         if token.type == "PLUS":
             Parser.lexer.select_next()
-            return Parser.parse_factor()
+            child = Parser.parse_factor()
+            return UnOp("+", [child])
 
-        # Unary -
         if token.type == "MINUS":
             Parser.lexer.select_next()
-            return -Parser.parse_factor()
+            child = Parser.parse_factor()
+            return UnOp("-", [child])
 
-        # Número
         if token.type == "INT":
-            value = token.value
+            node = IntVal(token.value)
             Parser.lexer.select_next()
-            return value
+            return node
 
-        # Parênteses
         if token.type == "LPAREN":
             Parser.lexer.select_next()
-            result = Parser.parse_expression()
+            node = Parser.parse_expression()
 
             if Parser.lexer.next.type != "RPAREN":
                 raise Exception("[Parser] Missing )")
 
             Parser.lexer.select_next()
-            return result
+            return node
 
         raise Exception("[Parser] Unexpected token")
 
@@ -143,12 +182,12 @@ class Parser:
         Parser.lexer = Lexer(code)
         Parser.lexer.select_next()
 
-        result = Parser.parse_expression()
+        tree = Parser.parse_expression()
 
         if Parser.lexer.next.type != "EOF":
             raise Exception("[Parser] Unexpected token after expression")
 
-        return result
+        return tree
 
 
 def main():
@@ -160,8 +199,8 @@ def main():
     if not code or code.isspace():
         raise Exception("[Parser] Empty input")
 
-    result = Parser.run(code)
-    print(result)
+    tree = Parser.run(code)
+    print(tree.evaluate())
 
 
 if __name__ == "__main__":
