@@ -12,24 +12,37 @@ class Token:
 class PrePro:
     @staticmethod
     def filter(code):
-        return re.sub(r'//[^\n]*', '', code)
+        code = re.sub(r'//[^\n]*', '', code)
+        const_pattern = re.compile(r'const\s+([a-zA-Z]\w*)\s*=\s*([^;]+);')
+        while True:
+            match = const_pattern.search(code)
+            if not match:
+                break
+            name = match.group(1)
+            value = match.group(2).strip()
+            code = code[:match.start()] + code[match.end():]
+            code = re.sub(r'\b' + name + r'\b', value, code)
+        return code
 
 
 class Variable:
-    def __init__(self, value):
+    def __init__(self, value, immutable=False):
         self.value = value
+        self.immutable = immutable
 
 
 class SymbolTable:
     def __init__(self):
         self.table = {}
 
-    def get(self, name):
+    def get_value(self, name):
         if name not in self.table:
             raise Exception("[Semantic] Undefined variable")
         return self.table[name]
 
-    def set(self, name, variable):
+    def set_value(self, name, variable):
+        if name in self.table and self.table[name].immutable:
+            raise Exception("[Semantic] Cannot reassign immutable variable")
         self.table[name] = variable
 
 
@@ -89,7 +102,7 @@ class Identifier(Node):
         super().__init__(value, children or [])
 
     def evaluate(self, st):
-        return st.get(self.value).value
+        return st.get_value(self.value).value
 
 
 class Assignment(Node):
@@ -97,7 +110,15 @@ class Assignment(Node):
         super().__init__(value, children or [])
 
     def evaluate(self, st):
-        st.set(self.children[0].value, Variable(self.children[1].evaluate(st)))
+        st.set_value(self.children[0].value, Variable(self.children[1].evaluate(st)))
+
+
+class LetAssignment(Node):
+    def __init__(self, value=None, children=None):
+        super().__init__(value, children or [])
+
+    def evaluate(self, st):
+        st.set_value(self.children[0].value, Variable(self.children[1].evaluate(st), immutable=True))
 
 
 class Print(Node):
@@ -126,7 +147,7 @@ class NoOp(Node):
 
 
 class Lexer:
-    RESERVED = {"println!": "PRINT"}
+    RESERVED = {"println!": "PRINT", "let": "LET"}
 
     def __init__(self, source):
         self.source = source
@@ -235,6 +256,21 @@ class Parser:
 
             expr = Parser.parse_expression()
             node = Assignment(None, [iden, expr])
+
+        elif token.type == "LET":
+            Parser.lexer.select_next()
+
+            if Parser.lexer.next.type != "IDEN":
+                raise Exception("[Parser] Expected identifier")
+            iden = Identifier(Parser.lexer.next.value)
+            Parser.lexer.select_next()
+
+            if Parser.lexer.next.type != "ASSIGN":
+                raise Exception("[Parser] Expected '='")
+            Parser.lexer.select_next()
+
+            expr = Parser.parse_expression()
+            node = LetAssignment(None, [iden, expr])
 
         elif token.type == "PRINT":
             Parser.lexer.select_next()
