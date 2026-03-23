@@ -19,16 +19,16 @@ class Node(ABC):
 
 
 class IntVal(Node):
-    def __init__(self, value):
-        super().__init__(value, [])
+    def __init__(self, value, children=None):
+        super().__init__(value, children or [])
 
     def evaluate(self):
         return self.value
 
 
 class UnOp(Node):
-    def __init__(self, value, child):
-        super().__init__(value, [child])
+    def __init__(self, value, children=None):
+        super().__init__(value, children or [])
 
     def evaluate(self):
         child_val = self.children[0].evaluate()
@@ -36,12 +36,19 @@ class UnOp(Node):
             return child_val
         if self.value == "-":
             return -child_val
+        if self.value == "!":
+            if child_val < 0:
+                raise Exception("[Semantic] Factorial of negative number")
+            result = 1
+            for i in range(2, child_val + 1):
+                result *= i
+            return result
         raise Exception("[Semantic] Unknown unary operator")
 
 
 class BinOp(Node):
-    def __init__(self, value, left, right):
-        super().__init__(value, [left, right])
+    def __init__(self, value, children=None):
+        super().__init__(value, children or [])
 
     def evaluate(self):
         left_val = self.children[0].evaluate()
@@ -98,6 +105,11 @@ class Lexer:
             self.position += 1
             return
 
+        if current == '!':
+            self.next = Token("FACT", '!')
+            self.position += 1
+            return
+
         if current == '(':
             self.next = Token("LPAREN", '(')
             self.position += 1
@@ -130,7 +142,7 @@ class Parser:
             op = "+" if Parser.lexer.next.type == "PLUS" else "-"
             Parser.lexer.select_next()
             right = Parser.parse_term()
-            node = BinOp(op, node, right)
+            node = BinOp(op, [node, right])
 
         return node
 
@@ -142,7 +154,7 @@ class Parser:
             op = "*" if Parser.lexer.next.type == "MULT" else "/"
             Parser.lexer.select_next()
             right = Parser.parse_factor()
-            node = BinOp(op, node, right)
+            node = BinOp(op, [node, right])
 
         return node
 
@@ -153,12 +165,28 @@ class Parser:
         if token.type == "PLUS":
             Parser.lexer.select_next()
             child = Parser.parse_factor()
-            return UnOp("+", child)
+            return UnOp("+", [child])
 
         if token.type == "MINUS":
             Parser.lexer.select_next()
             child = Parser.parse_factor()
-            return UnOp("-", child)
+            return UnOp("-", [child])
+
+        return Parser.parse_factorial()
+
+    @staticmethod
+    def parse_factorial():
+        node = Parser.parse_primary()
+
+        while Parser.lexer.next.type == "FACT":
+            Parser.lexer.select_next()
+            node = UnOp("!", [node])
+
+        return node
+
+    @staticmethod
+    def parse_primary():
+        token = Parser.lexer.next
 
         if token.type == "INT":
             node = IntVal(token.value)
