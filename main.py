@@ -1,4 +1,5 @@
 import sys
+import re
 from abc import ABC, abstractmethod
 
 
@@ -8,13 +9,37 @@ class Token:
         self.value = value
 
 
+class PrePro:
+    @staticmethod
+    def filter(code):
+        return re.sub(r'//[^\n]*', '', code)
+
+
+class Variable:
+    def __init__(self, value):
+        self.value = value
+
+
+class SymbolTable:
+    def __init__(self):
+        self.table = {}
+
+    def get(self, name):
+        if name not in self.table:
+            raise Exception("[Semantic] Undefined variable")
+        return self.table[name]
+
+    def set(self, name, variable):
+        self.table[name] = variable
+
+
 class Node(ABC):
     def __init__(self, value, children=None):
         self.value = value
         self.children = children or []
 
     @abstractmethod
-    def evaluate(self):
+    def evaluate(self, st):
         pass
 
 
@@ -22,7 +47,7 @@ class IntVal(Node):
     def __init__(self, value, children=None):
         super().__init__(value, children or [])
 
-    def evaluate(self):
+    def evaluate(self, st):
         return self.value
 
 
@@ -30,8 +55,8 @@ class UnOp(Node):
     def __init__(self, value, children=None):
         super().__init__(value, children or [])
 
-    def evaluate(self):
-        child_val = self.children[0].evaluate()
+    def evaluate(self, st):
+        child_val = self.children[0].evaluate(st)
         if self.value == "+":
             return child_val
         if self.value == "-":
@@ -43,9 +68,9 @@ class BinOp(Node):
     def __init__(self, value, children=None):
         super().__init__(value, children or [])
 
-    def evaluate(self):
-        left_val = self.children[0].evaluate()
-        right_val = self.children[1].evaluate()
+    def evaluate(self, st):
+        left_val = self.children[0].evaluate(st)
+        right_val = self.children[1].evaluate(st)
         if self.value == "+":
             return left_val + right_val
         if self.value == "-":
@@ -59,7 +84,50 @@ class BinOp(Node):
         raise Exception("[Semantic] Unknown binary operator")
 
 
+class Identifier(Node):
+    def __init__(self, value, children=None):
+        super().__init__(value, children or [])
+
+    def evaluate(self, st):
+        return st.get(self.value).value
+
+
+class Assignment(Node):
+    def __init__(self, value, children=None):
+        super().__init__(value, children or [])
+
+    def evaluate(self, st):
+        st.set(self.children[0].value, Variable(self.children[1].evaluate(st)))
+
+
+class Print(Node):
+    def __init__(self, value, children=None):
+        super().__init__(value, children or [])
+
+    def evaluate(self, st):
+        print(self.children[0].evaluate(st))
+
+
+class Block(Node):
+    def __init__(self, value, children=None):
+        super().__init__(value, children or [])
+
+    def evaluate(self, st):
+        for child in self.children:
+            child.evaluate(st)
+
+
+class NoOp(Node):
+    def __init__(self, value=None, children=None):
+        super().__init__(value, children or [])
+
+    def evaluate(self, st):
+        pass
+
+
 class Lexer:
+    RESERVED = {"println!": "PRINT"}
+
     def __init__(self, source):
         self.source = source
         self.position = 0
@@ -69,7 +137,7 @@ class Lexer:
         s = self.source
         n = len(s)
 
-        while self.position < n and s[self.position] == ' ':
+        while self.position < n and s[self.position] in (' ', '\n', '\r', '\t'):
             self.position += 1
 
         if self.position >= n:
@@ -98,6 +166,16 @@ class Lexer:
             self.position += 1
             return
 
+        if current == '=':
+            self.next = Token("ASSIGN", '=')
+            self.position += 1
+            return
+
+        if current == ';':
+            self.next = Token("END", ';')
+            self.position += 1
+            return
+
         if current == '(':
             self.next = Token("LPAREN", '(')
             self.position += 1
@@ -116,11 +194,71 @@ class Lexer:
             self.next = Token("INT", int(num))
             return
 
+        if current.isalpha():
+            ident = ""
+            while self.position < n and (s[self.position].isalnum() or s[self.position] == '_'):
+                ident += s[self.position]
+                self.position += 1
+            if self.position < n and s[self.position] == '!' and ident + '!' in self.RESERVED:
+                ident += '!'
+                self.position += 1
+            if ident in self.RESERVED:
+                self.next = Token(self.RESERVED[ident], ident)
+            else:
+                self.next = Token("IDEN", ident)
+            return
+
         raise Exception("[Lexer] Invalid symbol")
 
 
 class Parser:
     lexer = None
+
+    @staticmethod
+    def parse_program():
+        children = []
+        while Parser.lexer.next.type != "EOF":
+            children.append(Parser.parse_statement())
+        return Block(None, children)
+
+    @staticmethod
+    def parse_statement():
+        token = Parser.lexer.next
+
+        if token.type == "IDEN":
+            iden = Identifier(token.value)
+            Parser.lexer.select_next()
+
+            if Parser.lexer.next.type != "ASSIGN":
+                raise Exception("[Parser] Expected '='")
+            Parser.lexer.select_next()
+
+            expr = Parser.parse_expression()
+            node = Assignment(None, [iden, expr])
+
+        elif token.type == "PRINT":
+            Parser.lexer.select_next()
+
+            if Parser.lexer.next.type != "LPAREN":
+                raise Exception("[Parser] Expected '('")
+            Parser.lexer.select_next()
+
+            expr = Parser.parse_expression()
+
+            if Parser.lexer.next.type != "RPAREN":
+                raise Exception("[Parser] Expected ')'")
+            Parser.lexer.select_next()
+
+            node = Print(None, [expr])
+
+        else:
+            node = NoOp()
+
+        if Parser.lexer.next.type != "END":
+            raise Exception("[Parser] Expected ';'")
+        Parser.lexer.select_next()
+
+        return node
 
     @staticmethod
     def parse_expression():
@@ -165,6 +303,11 @@ class Parser:
             Parser.lexer.select_next()
             return node
 
+        if token.type == "IDEN":
+            node = Identifier(token.value)
+            Parser.lexer.select_next()
+            return node
+
         if token.type == "LPAREN":
             Parser.lexer.select_next()
             node = Parser.parse_expression()
@@ -182,25 +325,28 @@ class Parser:
         Parser.lexer = Lexer(code)
         Parser.lexer.select_next()
 
-        tree = Parser.parse_expression()
+        tree = Parser.parse_program()
 
         if Parser.lexer.next.type != "EOF":
-            raise Exception("[Parser] Unexpected token after expression")
+            raise Exception("[Parser] Unexpected token after program")
 
         return tree
 
 
 def main():
     if len(sys.argv) != 2:
-        raise Exception("[Parser] Usage: python main.py 'expressao'")
+        raise Exception("[Parser] Usage: python main.py file.rs")
 
-    code = sys.argv[1]
+    filename = sys.argv[1]
+    with open(filename, 'r') as f:
+        code = f.read()
 
-    if not code or code.isspace():
-        raise Exception("[Parser] Empty input")
+    code += "\n"
+    code = PrePro.filter(code)
 
     tree = Parser.run(code)
-    print(tree.evaluate())
+    st = SymbolTable()
+    tree.evaluate(st)
 
 
 if __name__ == "__main__":
