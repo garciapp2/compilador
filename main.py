@@ -13,9 +13,9 @@ class PrePro:
     @staticmethod
     def filter(code):
         code = re.sub(r'//[^\n]*', '', code)
-        const_pattern = re.compile(r'const\s+([a-zA-Z]\w*)\s*=\s*([^;]+);')
+        define_pattern = re.compile(r'#define\s+([a-zA-Z]\w*)\s+([^\n]+)')
         while True:
-            match = const_pattern.search(code)
+            match = define_pattern.search(code)
             if not match:
                 break
             name = match.group(1)
