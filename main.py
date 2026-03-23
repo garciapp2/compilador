@@ -13,15 +13,13 @@ class PrePro:
     @staticmethod
     def filter(code):
         code = re.sub(r'//[^\n]*', '', code)
-        define_pattern = re.compile(r'#define\s+([a-zA-Z]\w*)\s+([^\n]+)')
         while True:
-            match = define_pattern.search(code)
-            if not match:
+            m = re.search(r'#define\s+([a-zA-Z]\w*)\s+([^\n]+)', code)
+            if not m:
                 break
-            name = match.group(1)
-            value = match.group(2).strip()
-            code = code[:match.start()] + code[match.end():]
-            code = re.sub(r'\b' + name + r'\b', value, code)
+            name, val = m.group(1), m.group(2).strip()
+            code = code[:m.start()] + code[m.end():]
+            code = re.sub(r'\b' + name + r'\b', val, code)
         return code
 
 
@@ -40,10 +38,10 @@ class SymbolTable:
             raise Exception("[Semantic] Undefined variable")
         return self.table[name]
 
-    def set_value(self, name, variable):
+    def set_value(self, name, var):
         if name in self.table and self.table[name].immutable:
             raise Exception("[Semantic] Cannot reassign immutable variable")
-        self.table[name] = variable
+        self.table[name] = var
 
 
 class Node(ABC):
@@ -57,85 +55,58 @@ class Node(ABC):
 
 
 class IntVal(Node):
-    def __init__(self, value, children=None):
-        super().__init__(value, children or [])
-
     def evaluate(self, st):
         return self.value
 
 
 class UnOp(Node):
-    def __init__(self, value, children=None):
-        super().__init__(value, children or [])
-
     def evaluate(self, st):
-        child_val = self.children[0].evaluate(st)
+        val = self.children[0].evaluate(st)
         if self.value == "+":
-            return child_val
+            return val
         if self.value == "-":
-            return -child_val
-        raise Exception("[Semantic] Unknown unary operator")
+            return -val
 
 
 class BinOp(Node):
-    def __init__(self, value, children=None):
-        super().__init__(value, children or [])
-
     def evaluate(self, st):
-        left_val = self.children[0].evaluate(st)
-        right_val = self.children[1].evaluate(st)
+        left = self.children[0].evaluate(st)
+        right = self.children[1].evaluate(st)
         if self.value == "+":
-            return left_val + right_val
+            return left + right
         if self.value == "-":
-            return left_val - right_val
+            return left - right
         if self.value == "*":
-            return left_val * right_val
+            return left * right
         if self.value == "/":
-            if right_val == 0:
+            if right == 0:
                 raise Exception("[Semantic] Division by zero")
-            return left_val // right_val
-        raise Exception("[Semantic] Unknown binary operator")
+            return left // right
 
 
 class Identifier(Node):
-    def __init__(self, value, children=None):
-        super().__init__(value, children or [])
-
     def evaluate(self, st):
         return st.get_value(self.value).value
 
 
 class Assignment(Node):
-    def __init__(self, value, children=None):
-        super().__init__(value, children or [])
-
     def evaluate(self, st):
-        immutable = self.value == "let"
-        st.set_value(self.children[0].value, Variable(self.children[1].evaluate(st), immutable))
-
+        val = self.children[1].evaluate(st)
+        st.set_value(self.children[0].value, Variable(val, self.value == "let"))
 
 
 class Print(Node):
-    def __init__(self, value, children=None):
-        super().__init__(value, children or [])
-
     def evaluate(self, st):
         print(self.children[0].evaluate(st))
 
 
 class Block(Node):
-    def __init__(self, value, children=None):
-        super().__init__(value, children or [])
-
     def evaluate(self, st):
         for child in self.children:
             child.evaluate(st)
 
 
 class NoOp(Node):
-    def __init__(self, value=None, children=None):
-        super().__init__(value, children or [])
-
     def evaluate(self, st):
         pass
 
@@ -159,49 +130,16 @@ class Lexer:
             self.next = Token("EOF", "")
             return
 
-        current = s[self.position]
+        c = s[self.position]
 
-        if current == '+':
-            self.next = Token("PLUS", '+')
+        if c in ('+', '-', '*', '/', '=', ';', '(', ')'):
+            types = {'+': "PLUS", '-': "MINUS", '*': "MULT", '/': "DIV",
+                     '=': "ASSIGN", ';': "END", '(': "LPAREN", ')': "RPAREN"}
+            self.next = Token(types[c], c)
             self.position += 1
             return
 
-        if current == '-':
-            self.next = Token("MINUS", '-')
-            self.position += 1
-            return
-
-        if current == '*':
-            self.next = Token("MULT", '*')
-            self.position += 1
-            return
-
-        if current == '/':
-            self.next = Token("DIV", '/')
-            self.position += 1
-            return
-
-        if current == '=':
-            self.next = Token("ASSIGN", '=')
-            self.position += 1
-            return
-
-        if current == ';':
-            self.next = Token("END", ';')
-            self.position += 1
-            return
-
-        if current == '(':
-            self.next = Token("LPAREN", '(')
-            self.position += 1
-            return
-
-        if current == ')':
-            self.next = Token("RPAREN", ')')
-            self.position += 1
-            return
-
-        if current.isdigit():
+        if c.isdigit():
             num = ""
             while self.position < n and s[self.position].isdigit():
                 num += s[self.position]
@@ -209,18 +147,18 @@ class Lexer:
             self.next = Token("INT", int(num))
             return
 
-        if current.isalpha():
-            ident = ""
+        if c.isalpha():
+            word = ""
             while self.position < n and (s[self.position].isalnum() or s[self.position] == '_'):
-                ident += s[self.position]
+                word += s[self.position]
                 self.position += 1
-            if self.position < n and s[self.position] == '!' and ident + '!' in self.RESERVED:
-                ident += '!'
+            if self.position < n and s[self.position] == '!' and word + '!' in self.RESERVED:
+                word += '!'
                 self.position += 1
-            if ident in self.RESERVED:
-                self.next = Token(self.RESERVED[ident], ident)
+            if word in self.RESERVED:
+                self.next = Token(self.RESERVED[word], word)
             else:
-                self.next = Token("IDEN", ident)
+                self.next = Token("IDEN", word)
             return
 
         raise Exception("[Lexer] Invalid symbol")
@@ -231,54 +169,45 @@ class Parser:
 
     @staticmethod
     def parse_program():
-        children = []
+        stmts = []
         while Parser.lexer.next.type != "EOF":
-            children.append(Parser.parse_statement())
-        return Block(None, children)
+            stmts.append(Parser.parse_statement())
+        return Block(None, stmts)
 
     @staticmethod
     def parse_statement():
-        token = Parser.lexer.next
+        tok = Parser.lexer.next
 
-        if token.type == "IDEN":
-            iden = Identifier(token.value)
+        if tok.type == "IDEN":
+            iden = Identifier(tok.value)
             Parser.lexer.select_next()
-
             if Parser.lexer.next.type != "ASSIGN":
                 raise Exception("[Parser] Expected '='")
             Parser.lexer.select_next()
-
             expr = Parser.parse_expression()
             node = Assignment(None, [iden, expr])
 
-        elif token.type == "LET":
+        elif tok.type == "LET":
             Parser.lexer.select_next()
-
             if Parser.lexer.next.type != "IDEN":
                 raise Exception("[Parser] Expected identifier")
             iden = Identifier(Parser.lexer.next.value)
             Parser.lexer.select_next()
-
             if Parser.lexer.next.type != "ASSIGN":
                 raise Exception("[Parser] Expected '='")
             Parser.lexer.select_next()
-
             expr = Parser.parse_expression()
             node = Assignment("let", [iden, expr])
 
-        elif token.type == "PRINT":
+        elif tok.type == "PRINT":
             Parser.lexer.select_next()
-
             if Parser.lexer.next.type != "LPAREN":
                 raise Exception("[Parser] Expected '('")
             Parser.lexer.select_next()
-
             expr = Parser.parse_expression()
-
             if Parser.lexer.next.type != "RPAREN":
                 raise Exception("[Parser] Expected ')'")
             Parser.lexer.select_next()
-
             node = Print(None, [expr])
 
         else:
@@ -287,64 +216,51 @@ class Parser:
         if Parser.lexer.next.type != "END":
             raise Exception("[Parser] Expected ';'")
         Parser.lexer.select_next()
-
         return node
 
     @staticmethod
     def parse_expression():
         node = Parser.parse_term()
-
         while Parser.lexer.next.type in ("PLUS", "MINUS"):
             op = "+" if Parser.lexer.next.type == "PLUS" else "-"
             Parser.lexer.select_next()
-            right = Parser.parse_term()
-            node = BinOp(op, [node, right])
-
+            node = BinOp(op, [node, Parser.parse_term()])
         return node
 
     @staticmethod
     def parse_term():
         node = Parser.parse_factor()
-
         while Parser.lexer.next.type in ("MULT", "DIV"):
             op = "*" if Parser.lexer.next.type == "MULT" else "/"
             Parser.lexer.select_next()
-            right = Parser.parse_factor()
-            node = BinOp(op, [node, right])
-
+            node = BinOp(op, [node, Parser.parse_factor()])
         return node
 
     @staticmethod
     def parse_factor():
-        token = Parser.lexer.next
+        tok = Parser.lexer.next
 
-        if token.type == "PLUS":
+        if tok.type == "PLUS":
             Parser.lexer.select_next()
-            child = Parser.parse_factor()
-            return UnOp("+", [child])
+            return UnOp("+", [Parser.parse_factor()])
 
-        if token.type == "MINUS":
+        if tok.type == "MINUS":
             Parser.lexer.select_next()
-            child = Parser.parse_factor()
-            return UnOp("-", [child])
+            return UnOp("-", [Parser.parse_factor()])
 
-        if token.type == "INT":
-            node = IntVal(token.value)
+        if tok.type == "INT":
             Parser.lexer.select_next()
-            return node
+            return IntVal(tok.value)
 
-        if token.type == "IDEN":
-            node = Identifier(token.value)
+        if tok.type == "IDEN":
             Parser.lexer.select_next()
-            return node
+            return Identifier(tok.value)
 
-        if token.type == "LPAREN":
+        if tok.type == "LPAREN":
             Parser.lexer.select_next()
             node = Parser.parse_expression()
-
             if Parser.lexer.next.type != "RPAREN":
                 raise Exception("[Parser] Missing )")
-
             Parser.lexer.select_next()
             return node
 
@@ -354,12 +270,9 @@ class Parser:
     def run(code):
         Parser.lexer = Lexer(code)
         Parser.lexer.select_next()
-
         tree = Parser.parse_program()
-
         if Parser.lexer.next.type != "EOF":
             raise Exception("[Parser] Unexpected token after program")
-
         return tree
 
 
@@ -367,13 +280,10 @@ def main():
     if len(sys.argv) != 2:
         raise Exception("[Parser] Usage: python main.py file.rs")
 
-    filename = sys.argv[1]
-    with open(filename, 'r') as f:
+    with open(sys.argv[1], 'r') as f:
         code = f.read()
 
-    code += "\n"
-    code = PrePro.filter(code)
-
+    code = PrePro.filter(code + "\n")
     tree = Parser.run(code)
     st = SymbolTable()
     tree.evaluate(st)
