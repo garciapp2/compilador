@@ -12,23 +12,12 @@ class Token:
 class PrePro:
     @staticmethod
     def filter(code):
-        code = re.sub(r'//[^\n]*', '', code)
-        const_pattern = re.compile(r'const\s+([a-zA-Z]\w*)\s*=\s*([^;]+);')
-        while True:
-            match = const_pattern.search(code)
-            if not match:
-                break
-            name = match.group(1)
-            value = match.group(2).strip()
-            code = code[:match.start()] + code[match.end():]
-            code = re.sub(r'\b' + name + r'\b', value, code)
-        return code
+        return re.sub(r'//[^\n]*', '', code)
 
 
 class Variable:
-    def __init__(self, value, immutable=False):
+    def __init__(self, value):
         self.value = value
-        self.immutable = immutable
 
 
 class SymbolTable:
@@ -41,8 +30,6 @@ class SymbolTable:
         return self.table[name]
 
     def set_value(self, name, variable):
-        if name in self.table and self.table[name].immutable:
-            raise Exception("[Semantic] Cannot reassign immutable variable")
         self.table[name] = variable
 
 
@@ -113,13 +100,6 @@ class Assignment(Node):
         st.set_value(self.children[0].value, Variable(self.children[1].evaluate(st)))
 
 
-class LetAssignment(Node):
-    def __init__(self, value=None, children=None):
-        super().__init__(value, children or [])
-
-    def evaluate(self, st):
-        st.set_value(self.children[0].value, Variable(self.children[1].evaluate(st), immutable=True))
-
 
 class Print(Node):
     def __init__(self, value, children=None):
@@ -147,7 +127,7 @@ class NoOp(Node):
 
 
 class Lexer:
-    RESERVED = {"println!": "PRINT", "let": "LET"}
+    RESERVED = {"println!": "PRINT"}
 
     def __init__(self, source):
         self.source = source
@@ -256,21 +236,6 @@ class Parser:
 
             expr = Parser.parse_expression()
             node = Assignment(None, [iden, expr])
-
-        elif token.type == "LET":
-            Parser.lexer.select_next()
-
-            if Parser.lexer.next.type != "IDEN":
-                raise Exception("[Parser] Expected identifier")
-            iden = Identifier(Parser.lexer.next.value)
-            Parser.lexer.select_next()
-
-            if Parser.lexer.next.type != "ASSIGN":
-                raise Exception("[Parser] Expected '='")
-            Parser.lexer.select_next()
-
-            expr = Parser.parse_expression()
-            node = LetAssignment(None, [iden, expr])
 
         elif token.type == "PRINT":
             Parser.lexer.select_next()
