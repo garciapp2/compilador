@@ -55,6 +55,8 @@ class UnOp(Node):
             return val
         if self.value == "-":
             return -val
+        if self.value == "!":
+            return int(not val)
 
 
 class BinOp(Node):
@@ -71,6 +73,16 @@ class BinOp(Node):
             if right == 0:
                 raise Exception("[Semantic] Division by zero")
             return left // right
+        if self.value == "&&":
+            return int(left and right)
+        if self.value == "||":
+            return int(left or right)
+        if self.value == "==":
+            return int(left == right)
+        if self.value == ">":
+            return int(left > right)
+        if self.value == "<":
+            return int(left < right)
 
 
 class Identifier(Node):
@@ -94,13 +106,39 @@ class Block(Node):
             child.evaluate(st)
 
 
+class IfNode(Node):
+    def evaluate(self, st):
+        condition = self.children[0].evaluate(st)
+        if condition:
+            self.children[1].evaluate(st)
+        elif len(self.children) == 3:
+            self.children[2].evaluate(st)
+
+
+class WhileNode(Node):
+    def evaluate(self, st):
+        while self.children[0].evaluate(st):
+            self.children[1].evaluate(st)
+
+
+class ReadNode(Node):
+    def evaluate(self, st):
+        return int(input())
+
+
 class NoOp(Node):
     def evaluate(self, st):
         pass
 
 
 class Lexer:
-    RESERVED = {"println!": "PRINT"}
+    RESERVED = {
+        "println!": "PRINT",
+        "scanln!": "READ",
+        "if": "IF",
+        "else": "ELSE",
+        "while": "WHILE",
+    }
 
     def __init__(self, source):
         self.source = source
@@ -119,6 +157,46 @@ class Lexer:
             return
 
         c = s[self.position]
+
+        if c == '&' and self.position + 1 < n and s[self.position + 1] == '&':
+            self.next = Token("AND", "&&")
+            self.position += 2
+            return
+
+        if c == '|' and self.position + 1 < n and s[self.position + 1] == '|':
+            self.next = Token("OR", "||")
+            self.position += 2
+            return
+
+        if c == '=' and self.position + 1 < n and s[self.position + 1] == '=':
+            self.next = Token("EQ", "==")
+            self.position += 2
+            return
+
+        if c == '!':
+            self.next = Token("NOT", "!")
+            self.position += 1
+            return
+
+        if c == '>':
+            self.next = Token("GT", ">")
+            self.position += 1
+            return
+
+        if c == '<':
+            self.next = Token("LT", "<")
+            self.position += 1
+            return
+
+        if c == '{':
+            self.next = Token("OPEN_BRA", "{")
+            self.position += 1
+            return
+
+        if c == '}':
+            self.next = Token("CLOSE_BRA", "}")
+            self.position += 1
+            return
 
         if c in ('+', '-', '*', '/', '=', ';', '(', ')'):
             types = {'+': "PLUS", '-': "MINUS", '*': "MULT", '/': "DIV",
@@ -163,8 +241,50 @@ class Parser:
         return Block(None, stmts)
 
     @staticmethod
+    def parse_block():
+        if Parser.lexer.next.type != "OPEN_BRA":
+            raise Exception("[Parser] Expected '{'")
+        Parser.lexer.select_next()
+        stmts = []
+        while Parser.lexer.next.type != "CLOSE_BRA":
+            stmts.append(Parser.parse_statement())
+        Parser.lexer.select_next()
+        return Block(None, stmts)
+
+    @staticmethod
     def parse_statement():
         tok = Parser.lexer.next
+
+        if tok.type == "IF":
+            Parser.lexer.select_next()
+            if Parser.lexer.next.type != "LPAREN":
+                raise Exception("[Parser] Expected '('")
+            Parser.lexer.select_next()
+            cond = Parser.parse_bool_expression()
+            if Parser.lexer.next.type != "RPAREN":
+                raise Exception("[Parser] Expected ')'")
+            Parser.lexer.select_next()
+            then_stmt = Parser.parse_statement()
+            if Parser.lexer.next.type == "ELSE":
+                Parser.lexer.select_next()
+                else_stmt = Parser.parse_statement()
+                return IfNode(None, [cond, then_stmt, else_stmt])
+            return IfNode(None, [cond, then_stmt])
+
+        if tok.type == "WHILE":
+            Parser.lexer.select_next()
+            if Parser.lexer.next.type != "LPAREN":
+                raise Exception("[Parser] Expected '('")
+            Parser.lexer.select_next()
+            cond = Parser.parse_bool_expression()
+            if Parser.lexer.next.type != "RPAREN":
+                raise Exception("[Parser] Expected ')'")
+            Parser.lexer.select_next()
+            body = Parser.parse_statement()
+            return WhileNode(None, [cond, body])
+
+        if tok.type == "OPEN_BRA":
+            return Parser.parse_block()
 
         if tok.type == "IDEN":
             iden = Identifier(tok.value)
@@ -172,26 +292,58 @@ class Parser:
             if Parser.lexer.next.type != "ASSIGN":
                 raise Exception("[Parser] Expected '='")
             Parser.lexer.select_next()
-            expr = Parser.parse_expression()
+            expr = Parser.parse_bool_expression()
             node = Assignment(None, [iden, expr])
+            if Parser.lexer.next.type != "END":
+                raise Exception("[Parser] Expected ';'")
+            Parser.lexer.select_next()
+            return node
 
-        elif tok.type == "PRINT":
+        if tok.type == "PRINT":
             Parser.lexer.select_next()
             if Parser.lexer.next.type != "LPAREN":
                 raise Exception("[Parser] Expected '('")
             Parser.lexer.select_next()
-            expr = Parser.parse_expression()
+            expr = Parser.parse_bool_expression()
             if Parser.lexer.next.type != "RPAREN":
                 raise Exception("[Parser] Expected ')'")
             Parser.lexer.select_next()
             node = Print(None, [expr])
+            if Parser.lexer.next.type != "END":
+                raise Exception("[Parser] Expected ';'")
+            Parser.lexer.select_next()
+            return node
 
-        else:
-            node = NoOp()
-
+        node = NoOp()
         if Parser.lexer.next.type != "END":
             raise Exception("[Parser] Expected ';'")
         Parser.lexer.select_next()
+        return node
+
+    @staticmethod
+    def parse_bool_expression():
+        node = Parser.parse_bool_term()
+        while Parser.lexer.next.type == "OR":
+            Parser.lexer.select_next()
+            node = BinOp("||", [node, Parser.parse_bool_term()])
+        return node
+
+    @staticmethod
+    def parse_bool_term():
+        node = Parser.parse_rel_expression()
+        while Parser.lexer.next.type == "AND":
+            Parser.lexer.select_next()
+            node = BinOp("&&", [node, Parser.parse_rel_expression()])
+        return node
+
+    @staticmethod
+    def parse_rel_expression():
+        node = Parser.parse_expression()
+        while Parser.lexer.next.type in ("EQ", "GT", "LT"):
+            op_map = {"EQ": "==", "GT": ">", "LT": "<"}
+            op = op_map[Parser.lexer.next.type]
+            Parser.lexer.select_next()
+            node = BinOp(op, [node, Parser.parse_expression()])
         return node
 
     @staticmethod
@@ -224,6 +376,10 @@ class Parser:
             Parser.lexer.select_next()
             return UnOp("-", [Parser.parse_factor()])
 
+        if tok.type == "NOT":
+            Parser.lexer.select_next()
+            return UnOp("!", [Parser.parse_factor()])
+
         if tok.type == "INT":
             Parser.lexer.select_next()
             return IntVal(tok.value)
@@ -234,11 +390,21 @@ class Parser:
 
         if tok.type == "LPAREN":
             Parser.lexer.select_next()
-            node = Parser.parse_expression()
+            node = Parser.parse_bool_expression()
             if Parser.lexer.next.type != "RPAREN":
                 raise Exception("[Parser] Missing )")
             Parser.lexer.select_next()
             return node
+
+        if tok.type == "READ":
+            Parser.lexer.select_next()
+            if Parser.lexer.next.type != "LPAREN":
+                raise Exception("[Parser] Expected '('")
+            Parser.lexer.select_next()
+            if Parser.lexer.next.type != "RPAREN":
+                raise Exception("[Parser] Expected ')'")
+            Parser.lexer.select_next()
+            return ReadNode(None)
 
         raise Exception("[Parser] Unexpected token")
 
