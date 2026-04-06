@@ -110,15 +110,24 @@ class If(Node):
     def evaluate(self, st):
         condition = self.children[0].evaluate(st)
         if condition:
-            self.children[1].evaluate(st)
+            return self.children[1].evaluate(st)
         elif len(self.children) == 3:
-            self.children[2].evaluate(st)
+            return self.children[2].evaluate(st)
+        return None
 
 
 class While(Node):
     def evaluate(self, st):
         while self.children[0].evaluate(st):
             self.children[1].evaluate(st)
+
+
+class For(Node):
+    def evaluate(self, st):
+        self.children[0].evaluate(st)
+        while self.children[1].evaluate(st):
+            self.children[3].evaluate(st)
+            self.children[2].evaluate(st)
 
 
 class Read(Node):
@@ -138,6 +147,7 @@ class Lexer:
         "if": "IF",
         "else": "ELSE",
         "while": "WHILE",
+        "for": "FOR",
     }
 
     def __init__(self, source):
@@ -285,6 +295,30 @@ class Parser:
             body = Parser.parse_statement()
             return While(None, [cond, body])
 
+        if tok.type == "FOR":
+            Parser.lexer.select_next()
+            if Parser.lexer.next.type != "LPAREN":
+                raise Exception("[Parser] Expected '('")
+            Parser.lexer.select_next()
+
+            init = Parser.parse_assignment_inside_for()
+            if Parser.lexer.next.type != "END":
+                raise Exception("[Parser] Expected ';'")
+            Parser.lexer.select_next()
+
+            cond = Parser.parse_bool_expression()
+            if Parser.lexer.next.type != "END":
+                raise Exception("[Parser] Expected ';'")
+            Parser.lexer.select_next()
+
+            step = Parser.parse_assignment_inside_for()
+            if Parser.lexer.next.type != "RPAREN":
+                raise Exception("[Parser] Expected ')'")
+            Parser.lexer.select_next()
+
+            body = Parser.parse_statement()
+            return For(None, [init, cond, step, body])
+
         if tok.type == "OPEN_BRA":
             return Parser.parse_block()
 
@@ -331,6 +365,18 @@ class Parser:
         return node
 
     @staticmethod
+    def parse_assignment_inside_for():
+        if Parser.lexer.next.type != "IDEN":
+            raise Exception("[Parser] Expected identifier")
+        iden = Identifier(Parser.lexer.next.value)
+        Parser.lexer.select_next()
+        if Parser.lexer.next.type != "ASSIGN":
+            raise Exception("[Parser] Expected '='")
+        Parser.lexer.select_next()
+        expr = Parser.parse_bool_expression()
+        return Assignment(None, [iden, expr])
+
+    @staticmethod
     def parse_bool_term():
         node = Parser.parse_rel_expression()
         while Parser.lexer.next.type == "AND":
@@ -369,6 +415,28 @@ class Parser:
     @staticmethod
     def parse_factor():
         tok = Parser.lexer.next
+
+        if tok.type == "IF":
+            Parser.lexer.select_next()
+            cond = Parser.parse_bool_expression()
+            if Parser.lexer.next.type != "OPEN_BRA":
+                raise Exception("[Parser] Expected '{'")
+            Parser.lexer.select_next()
+            true_expr = Parser.parse_bool_expression()
+            if Parser.lexer.next.type != "CLOSE_BRA":
+                raise Exception("[Parser] Expected '}'")
+            Parser.lexer.select_next()
+            if Parser.lexer.next.type != "ELSE":
+                raise Exception("[Parser] Expected 'else'")
+            Parser.lexer.select_next()
+            if Parser.lexer.next.type != "OPEN_BRA":
+                raise Exception("[Parser] Expected '{'")
+            Parser.lexer.select_next()
+            false_expr = Parser.parse_bool_expression()
+            if Parser.lexer.next.type != "CLOSE_BRA":
+                raise Exception("[Parser] Expected '}'")
+            Parser.lexer.select_next()
+            return If(None, [cond, true_expr, false_expr])
 
         if tok.type == "PLUS":
             Parser.lexer.select_next()
