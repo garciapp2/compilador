@@ -106,7 +106,7 @@ class Block(Node):
             child.evaluate(st)
 
 
-class IfNode(Node):
+class If(Node):
     def evaluate(self, st):
         condition = self.children[0].evaluate(st)
         if condition:
@@ -115,13 +115,13 @@ class IfNode(Node):
             self.children[2].evaluate(st)
 
 
-class WhileNode(Node):
+class While(Node):
     def evaluate(self, st):
         while self.children[0].evaluate(st):
             self.children[1].evaluate(st)
 
 
-class ReadNode(Node):
+class Read(Node):
     def evaluate(self, st):
         return int(input())
 
@@ -268,8 +268,8 @@ class Parser:
             if Parser.lexer.next.type == "ELSE":
                 Parser.lexer.select_next()
                 else_stmt = Parser.parse_statement()
-                return IfNode(None, [cond, then_stmt, else_stmt])
-            return IfNode(None, [cond, then_stmt])
+                return If(None, [cond, then_stmt, else_stmt])
+            return If(None, [cond, then_stmt])
 
         if tok.type == "WHILE":
             Parser.lexer.select_next()
@@ -281,7 +281,7 @@ class Parser:
                 raise Exception("[Parser] Expected ')'")
             Parser.lexer.select_next()
             body = Parser.parse_statement()
-            return WhileNode(None, [cond, body])
+            return While(None, [cond, body])
 
         if tok.type == "OPEN_BRA":
             return Parser.parse_block()
@@ -404,7 +404,7 @@ class Parser:
             if Parser.lexer.next.type != "RPAREN":
                 raise Exception("[Parser] Expected ')'")
             Parser.lexer.select_next()
-            return ReadNode(None)
+            return Read(None)
 
         raise Exception("[Parser] Unexpected token")
 
