@@ -247,6 +247,8 @@ class Parser:
         Parser.lexer.select_next()
         stmts = []
         while Parser.lexer.next.type != "CLOSE_BRA":
+            if Parser.lexer.next.type == "EOF":
+                raise Exception("[Parser] Expected '}'")
             stmts.append(Parser.parse_statement())
         Parser.lexer.select_next()
         return Block(None, stmts)
@@ -314,7 +316,7 @@ class Parser:
             Parser.lexer.select_next()
             return node
 
-        node = NoOp()
+        node = NoOp(None)
         if Parser.lexer.next.type != "END":
             raise Exception("[Parser] Expected ';'")
         Parser.lexer.select_next()
