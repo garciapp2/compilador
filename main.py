@@ -198,12 +198,29 @@ class Cast(Node):
     def evaluate(self, st):
         target_type = self.value
         value = self.children[0].evaluate(st)
-        if value.type not in ("i32", "f64"):
-            raise Exception("[Semantic] Cast supports only i32/f64")
         if target_type == "i32":
+            if value.type == "bool":
+                return Variable(1 if value.value else 0, "i32")
+            if value.type == "str":
+                if not value.value.lstrip("-").isdigit():
+                    raise Exception("[Semantic] Invalid cast to i32")
+                return Variable(int(value.value), "i32")
             return Variable(int(round(float(value.value))), "i32")
         if target_type == "f64":
+            if value.type == "bool":
+                return Variable(1.0 if value.value else 0.0, "f64")
+            if value.type == "str":
+                try:
+                    return Variable(float(value.value), "f64")
+                except ValueError:
+                    raise Exception("[Semantic] Invalid cast to f64")
             return Variable(float(value.value), "f64")
+        if target_type == "bool":
+            if value.type == "str":
+                return Variable(len(value.value) > 0, "bool")
+            return Variable(value.value != 0, "bool")
+        if target_type == "str":
+            return Variable(variable_to_string(value), "str")
         raise Exception("[Semantic] Invalid cast target type")
 
 
@@ -668,8 +685,6 @@ class Parser:
             Parser.lexer.select_next()
             if Parser.lexer.next.type == "TYPE":
                 target_type = Parser.lexer.next.value
-                if target_type not in ("i32", "f64"):
-                    raise Exception("[Semantic] Cast supports only i32/f64")
                 Parser.lexer.select_next()
                 if Parser.lexer.next.type != "RPAREN":
                     raise Exception("[Parser] Expected ')'")
