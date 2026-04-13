@@ -16,8 +16,10 @@ class PrePro:
 
 
 class Variable:
-    def __init__(self, value):
+    def __init__(self, value, type_, mutable=True):
         self.value = value
+        self.type = type_
+        self.mutable = mutable
 
 
 class SymbolTable:
@@ -30,6 +32,17 @@ class SymbolTable:
         return self.table[name]
 
     def set_value(self, name, var):
+        if name not in self.table:
+            raise Exception("[Semantic] Variable not declared")
+        if not self.table[name].mutable:
+            raise Exception("[Semantic] Cannot assign immutable variable")
+        if self.table[name].type != var.type:
+            raise Exception("[Semantic] Type mismatch in assignment")
+        self.table[name] = var
+
+    def create_variable(self, name, var):
+        if name in self.table:
+            raise Exception("[Semantic] Variable already declared")
         self.table[name] = var
 
 
@@ -45,18 +58,34 @@ class Node(ABC):
 
 class IntVal(Node):
     def evaluate(self, st):
-        return self.value
+        return Variable(self.value, "i32")
+
+
+class BoolVal(Node):
+    def evaluate(self, st):
+        return Variable(self.value, "bool")
+
+
+class StringVal(Node):
+    def evaluate(self, st):
+        return Variable(self.value, "str")
 
 
 class UnOp(Node):
     def evaluate(self, st):
         val = self.children[0].evaluate(st)
         if self.value == "+":
-            return val
+            if val.type != "i32":
+                raise Exception("[Semantic] Unary '+' requires i32")
+            return Variable(val.value, "i32")
         if self.value == "-":
-            return -val
+            if val.type != "i32":
+                raise Exception("[Semantic] Unary '-' requires i32")
+            return Variable(-val.value, "i32")
         if self.value == "!":
-            return int(not val)
+            if val.type != "bool":
+                raise Exception("[Semantic] Unary '!' requires bool")
+            return Variable(not val.value, "bool")
 
 
 class BinOp(Node):
@@ -64,40 +93,83 @@ class BinOp(Node):
         left = self.children[0].evaluate(st)
         right = self.children[1].evaluate(st)
         if self.value == "+":
-            return left + right
+            if left.type == "i32" and right.type == "i32":
+                return Variable(left.value + right.value, "i32")
+            if left.type == "str" and right.type == "str":
+                return Variable(left.value + right.value, "str")
+            raise Exception("[Semantic] Invalid '+' operands")
         if self.value == "-":
-            return left - right
+            if left.type != "i32" or right.type != "i32":
+                raise Exception("[Semantic] Invalid '-' operands")
+            return Variable(left.value - right.value, "i32")
         if self.value == "*":
-            return left * right
+            if left.type != "i32" or right.type != "i32":
+                raise Exception("[Semantic] Invalid '*' operands")
+            return Variable(left.value * right.value, "i32")
         if self.value == "/":
-            if right == 0:
+            if left.type != "i32" or right.type != "i32":
+                raise Exception("[Semantic] Invalid '/' operands")
+            if right.value == 0:
                 raise Exception("[Semantic] Division by zero")
-            return left // right
+            return Variable(left.value // right.value, "i32")
         if self.value == "&&":
-            return int(left and right)
+            if left.type != "bool" or right.type != "bool":
+                raise Exception("[Semantic] Invalid '&&' operands")
+            return Variable(left.value and right.value, "bool")
         if self.value == "||":
-            return int(left or right)
+            if left.type != "bool" or right.type != "bool":
+                raise Exception("[Semantic] Invalid '||' operands")
+            return Variable(left.value or right.value, "bool")
         if self.value == "==":
-            return int(left == right)
+            if left.type != right.type:
+                raise Exception("[Semantic] Invalid '==' operands")
+            return Variable(left.value == right.value, "bool")
         if self.value == ">":
-            return int(left > right)
+            if left.type != "i32" or right.type != "i32":
+                raise Exception("[Semantic] Invalid '>' operands")
+            return Variable(left.value > right.value, "bool")
         if self.value == "<":
-            return int(left < right)
+            if left.type != "i32" or right.type != "i32":
+                raise Exception("[Semantic] Invalid '<' operands")
+            return Variable(left.value < right.value, "bool")
 
 
 class Identifier(Node):
     def evaluate(self, st):
-        return st.get_value(self.value).value
+        return st.get_value(self.value)
 
 
 class Assignment(Node):
     def evaluate(self, st):
-        st.set_value(self.children[0].value, Variable(self.children[1].evaluate(st)))
+        new_value = self.children[1].evaluate(st)
+        if self.children[0].value not in st.table:
+            st.create_variable(self.children[0].value, Variable(new_value.value, new_value.type, True))
+            return
+        st.set_value(self.children[0].value, Variable(new_value.value, new_value.type, st.get_value(self.children[0].value).mutable))
+
+
+class VarDec(Node):
+    def evaluate(self, st):
+        identifier = self.children[0].value
+        variable_type = self.value["type"]
+        mutable = self.value["mutable"]
+        if len(self.children) == 2:
+            init_val = self.children[1].evaluate(st)
+            if init_val.type != variable_type:
+                raise Exception("[Semantic] Type mismatch in declaration")
+            st.create_variable(identifier, Variable(init_val.value, variable_type, mutable))
+            return
+        default_map = {"i32": 0, "bool": False, "str": ""}
+        st.create_variable(identifier, Variable(default_map[variable_type], variable_type, mutable))
 
 
 class Print(Node):
     def evaluate(self, st):
-        print(self.children[0].evaluate(st))
+        value = self.children[0].evaluate(st)
+        if value.type == "bool":
+            print("true" if value.value else "false")
+            return
+        print(value.value)
 
 
 class Block(Node):
@@ -109,7 +181,9 @@ class Block(Node):
 class If(Node):
     def evaluate(self, st):
         condition = self.children[0].evaluate(st)
-        if condition:
+        if condition.type != "bool":
+            raise Exception("[Semantic] If condition must be bool")
+        if condition.value:
             return self.children[1].evaluate(st)
         elif len(self.children) == 3:
             return self.children[2].evaluate(st)
@@ -118,21 +192,38 @@ class If(Node):
 
 class While(Node):
     def evaluate(self, st):
-        while self.children[0].evaluate(st):
+        while True:
+            cond = self.children[0].evaluate(st)
+            if cond.type != "bool":
+                raise Exception("[Semantic] While condition must be bool")
+            if not cond.value:
+                break
             self.children[1].evaluate(st)
 
 
 class For(Node):
     def evaluate(self, st):
         self.children[0].evaluate(st)
-        while self.children[1].evaluate(st):
+        while True:
+            cond = self.children[1].evaluate(st)
+            if cond.type != "bool":
+                raise Exception("[Semantic] For condition must be bool")
+            if not cond.value:
+                break
             self.children[3].evaluate(st)
             self.children[2].evaluate(st)
 
 
 class Read(Node):
     def evaluate(self, st):
-        return int(input())
+        raw = input()
+        if raw == "true":
+            return Variable(True, "bool")
+        if raw == "false":
+            return Variable(False, "bool")
+        if raw.lstrip("-").isdigit():
+            return Variable(int(raw), "i32")
+        return Variable(raw, "str")
 
 
 class NoOp(Node):
@@ -148,6 +239,13 @@ class Lexer:
         "else": "ELSE",
         "while": "WHILE",
         "for": "FOR",
+        "let": "LET",
+        "mut": "MUT",
+        "str": "TYPE",
+        "i32": "TYPE",
+        "bool": "TYPE",
+        "true": "BOOL",
+        "false": "BOOL",
     }
 
     def __init__(self, source):
@@ -208,6 +306,23 @@ class Lexer:
             self.position += 1
             return
 
+        if c == ':':
+            self.next = Token("COLON", ":")
+            self.position += 1
+            return
+
+        if c == '"':
+            self.position += 1
+            text = ""
+            while self.position < n and s[self.position] != '"':
+                text += s[self.position]
+                self.position += 1
+            if self.position >= n:
+                raise Exception("[Lexer] Unterminated string")
+            self.position += 1
+            self.next = Token("STR", text)
+            return
+
         if c in ('+', '-', '*', '/', '=', ';', '(', ')'):
             types = {'+': "PLUS", '-': "MINUS", '*': "MULT", '/': "DIV",
                      '=': "ASSIGN", ';': "END", '(': "LPAREN", ')': "RPAREN"}
@@ -266,6 +381,34 @@ class Parser:
     @staticmethod
     def parse_statement():
         tok = Parser.lexer.next
+
+        if tok.type == "LET":
+            Parser.lexer.select_next()
+            mutable = False
+            if Parser.lexer.next.type == "MUT":
+                mutable = True
+                Parser.lexer.select_next()
+            if Parser.lexer.next.type != "IDEN":
+                raise Exception("[Parser] Expected identifier")
+            identifier = Identifier(Parser.lexer.next.value)
+            Parser.lexer.select_next()
+            if Parser.lexer.next.type != "COLON":
+                raise Exception("[Parser] Expected ':'")
+            Parser.lexer.select_next()
+            if Parser.lexer.next.type != "TYPE":
+                raise Exception("[Parser] Expected type")
+            declared_type = Parser.lexer.next.value
+            Parser.lexer.select_next()
+            if Parser.lexer.next.type == "ASSIGN":
+                Parser.lexer.select_next()
+                expr = Parser.parse_bool_expression()
+                node = VarDec({"type": declared_type, "mutable": mutable}, [identifier, expr])
+            else:
+                node = VarDec({"type": declared_type, "mutable": mutable}, [identifier])
+            if Parser.lexer.next.type != "END":
+                raise Exception("[Parser] Expected ';'")
+            Parser.lexer.select_next()
+            return node
 
         if tok.type == "IF":
             Parser.lexer.select_next()
@@ -453,6 +596,14 @@ class Parser:
         if tok.type == "INT":
             Parser.lexer.select_next()
             return IntVal(tok.value)
+
+        if tok.type == "BOOL":
+            Parser.lexer.select_next()
+            return BoolVal(tok.value == "true")
+
+        if tok.type == "STR":
+            Parser.lexer.select_next()
+            return StringVal(tok.value)
 
         if tok.type == "IDEN":
             Parser.lexer.select_next()
