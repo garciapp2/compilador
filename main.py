@@ -201,19 +201,6 @@ class While(Node):
             self.children[1].evaluate(st)
 
 
-class For(Node):
-    def evaluate(self, st):
-        self.children[0].evaluate(st)
-        while True:
-            cond = self.children[1].evaluate(st)
-            if cond.type != "bool":
-                raise Exception("[Semantic] For condition must be bool")
-            if not cond.value:
-                break
-            self.children[3].evaluate(st)
-            self.children[2].evaluate(st)
-
-
 class Read(Node):
     def evaluate(self, st):
         raw = input()
@@ -444,7 +431,15 @@ class Parser:
                 raise Exception("[Parser] Expected '('")
             Parser.lexer.select_next()
 
-            init = Parser.parse_assignment_inside_for()
+            if Parser.lexer.next.type != "IDEN":
+                raise Exception("[Parser] Expected identifier")
+            init_identifier = Identifier(Parser.lexer.next.value)
+            Parser.lexer.select_next()
+            if Parser.lexer.next.type != "ASSIGN":
+                raise Exception("[Parser] Expected '='")
+            Parser.lexer.select_next()
+            init_expr = Parser.parse_bool_expression()
+            init = Assignment(None, [init_identifier, init_expr])
             if Parser.lexer.next.type != "END":
                 raise Exception("[Parser] Expected ';'")
             Parser.lexer.select_next()
@@ -454,13 +449,22 @@ class Parser:
                 raise Exception("[Parser] Expected ';'")
             Parser.lexer.select_next()
 
-            step = Parser.parse_assignment_inside_for()
+            if Parser.lexer.next.type != "IDEN":
+                raise Exception("[Parser] Expected identifier")
+            step_identifier = Identifier(Parser.lexer.next.value)
+            Parser.lexer.select_next()
+            if Parser.lexer.next.type != "ASSIGN":
+                raise Exception("[Parser] Expected '='")
+            Parser.lexer.select_next()
+            step_expr = Parser.parse_bool_expression()
+            step = Assignment(None, [step_identifier, step_expr])
             if Parser.lexer.next.type != "RPAREN":
                 raise Exception("[Parser] Expected ')'")
             Parser.lexer.select_next()
 
             body = Parser.parse_statement()
-            return For(None, [init, cond, step, body])
+            while_body = Block(None, [body, step])
+            return Block(None, [init, While(None, [cond, while_body])])
 
         if tok.type == "OPEN_BRA":
             return Parser.parse_block()
@@ -506,18 +510,6 @@ class Parser:
             Parser.lexer.select_next()
             node = BinOp("||", [node, Parser.parse_bool_term()])
         return node
-
-    @staticmethod
-    def parse_assignment_inside_for():
-        if Parser.lexer.next.type != "IDEN":
-            raise Exception("[Parser] Expected identifier")
-        iden = Identifier(Parser.lexer.next.value)
-        Parser.lexer.select_next()
-        if Parser.lexer.next.type != "ASSIGN":
-            raise Exception("[Parser] Expected '='")
-        Parser.lexer.select_next()
-        expr = Parser.parse_bool_expression()
-        return Assignment(None, [iden, expr])
 
     @staticmethod
     def parse_bool_term():
