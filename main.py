@@ -71,6 +71,12 @@ class StringVal(Node):
         return Variable(self.value, "str")
 
 
+def variable_to_string(var):
+    if var.type == "bool":
+        return "true" if var.value else "false"
+    return str(var.value)
+
+
 class UnOp(Node):
     def evaluate(self, st):
         val = self.children[0].evaluate(st)
@@ -89,12 +95,6 @@ class UnOp(Node):
 
 
 class BinOp(Node):
-    @staticmethod
-    def to_string(var):
-        if var.type == "bool":
-            return "true" if var.value else "false"
-        return str(var.value)
-
     def evaluate(self, st):
         left = self.children[0].evaluate(st)
         right = self.children[1].evaluate(st)
@@ -104,9 +104,9 @@ class BinOp(Node):
             if left.type == "str" and right.type == "str":
                 return Variable(left.value + right.value, "str")
             if left.type == "str":
-                return Variable(left.value + BinOp.to_string(right), "str")
+                return Variable(left.value + variable_to_string(right), "str")
             if right.type == "str":
-                return Variable(BinOp.to_string(left) + right.value, "str")
+                return Variable(variable_to_string(left) + right.value, "str")
             raise Exception("[Semantic] Invalid '+' operands")
         if self.value == "-":
             if left.type != "i32" or right.type != "i32":
