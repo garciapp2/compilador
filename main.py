@@ -89,6 +89,12 @@ class UnOp(Node):
 
 
 class BinOp(Node):
+    @staticmethod
+    def to_string(var):
+        if var.type == "bool":
+            return "true" if var.value else "false"
+        return str(var.value)
+
     def evaluate(self, st):
         left = self.children[0].evaluate(st)
         right = self.children[1].evaluate(st)
@@ -97,6 +103,10 @@ class BinOp(Node):
                 return Variable(left.value + right.value, "i32")
             if left.type == "str" and right.type == "str":
                 return Variable(left.value + right.value, "str")
+            if left.type == "str":
+                return Variable(left.value + BinOp.to_string(right), "str")
+            if right.type == "str":
+                return Variable(BinOp.to_string(left) + right.value, "str")
             raise Exception("[Semantic] Invalid '+' operands")
         if self.value == "-":
             if left.type != "i32" or right.type != "i32":
@@ -125,13 +135,17 @@ class BinOp(Node):
                 raise Exception("[Semantic] Invalid '==' operands")
             return Variable(left.value == right.value, "bool")
         if self.value == ">":
-            if left.type != "i32" or right.type != "i32":
-                raise Exception("[Semantic] Invalid '>' operands")
-            return Variable(left.value > right.value, "bool")
+            if left.type == "i32" and right.type == "i32":
+                return Variable(left.value > right.value, "bool")
+            if left.type == "str" and right.type == "str":
+                return Variable(left.value > right.value, "bool")
+            raise Exception("[Semantic] Invalid '>' operands")
         if self.value == "<":
-            if left.type != "i32" or right.type != "i32":
-                raise Exception("[Semantic] Invalid '<' operands")
-            return Variable(left.value < right.value, "bool")
+            if left.type == "i32" and right.type == "i32":
+                return Variable(left.value < right.value, "bool")
+            if left.type == "str" and right.type == "str":
+                return Variable(left.value < right.value, "bool")
+            raise Exception("[Semantic] Invalid '<' operands")
 
 
 class Identifier(Node):
