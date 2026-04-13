@@ -61,6 +61,11 @@ class IntVal(Node):
         return Variable(self.value, "i32")
 
 
+class FloatVal(Node):
+    def evaluate(self, st):
+        return Variable(self.value, "f64")
+
+
 class BoolVal(Node):
     def evaluate(self, st):
         return Variable(self.value, "bool")
@@ -81,13 +86,13 @@ class UnOp(Node):
     def evaluate(self, st):
         val = self.children[0].evaluate(st)
         if self.value == "+":
-            if val.type != "i32":
-                raise Exception("[Semantic] Unary '+' requires i32")
-            return Variable(val.value, "i32")
+            if val.type not in ("i32", "f64"):
+                raise Exception("[Semantic] Unary '+' requires numeric type")
+            return Variable(val.value, val.type)
         if self.value == "-":
-            if val.type != "i32":
-                raise Exception("[Semantic] Unary '-' requires i32")
-            return Variable(-val.value, "i32")
+            if val.type not in ("i32", "f64"):
+                raise Exception("[Semantic] Unary '-' requires numeric type")
+            return Variable(-val.value, val.type)
         if self.value == "!":
             if val.type != "bool":
                 raise Exception("[Semantic] Unary '!' requires bool")
@@ -98,9 +103,15 @@ class BinOp(Node):
     def evaluate(self, st):
         left = self.children[0].evaluate(st)
         right = self.children[1].evaluate(st)
+
+        left_is_num = left.type in ("i32", "f64")
+        right_is_num = right.type in ("i32", "f64")
+        result_is_float = left.type == "f64" or right.type == "f64"
+
         if self.value == "+":
-            if left.type == "i32" and right.type == "i32":
-                return Variable(left.value + right.value, "i32")
+            if left_is_num and right_is_num:
+                result = left.value + right.value
+                return Variable(float(result), "f64") if result_is_float else Variable(result, "i32")
             if left.type == "str" and right.type == "str":
                 return Variable(left.value + right.value, "str")
             if left.type == "str":
@@ -109,18 +120,22 @@ class BinOp(Node):
                 return Variable(variable_to_string(left) + right.value, "str")
             raise Exception("[Semantic] Invalid '+' operands")
         if self.value == "-":
-            if left.type != "i32" or right.type != "i32":
+            if not (left_is_num and right_is_num):
                 raise Exception("[Semantic] Invalid '-' operands")
-            return Variable(left.value - right.value, "i32")
+            result = left.value - right.value
+            return Variable(float(result), "f64") if result_is_float else Variable(result, "i32")
         if self.value == "*":
-            if left.type != "i32" or right.type != "i32":
+            if not (left_is_num and right_is_num):
                 raise Exception("[Semantic] Invalid '*' operands")
-            return Variable(left.value * right.value, "i32")
+            result = left.value * right.value
+            return Variable(float(result), "f64") if result_is_float else Variable(result, "i32")
         if self.value == "/":
-            if left.type != "i32" or right.type != "i32":
+            if not (left_is_num and right_is_num):
                 raise Exception("[Semantic] Invalid '/' operands")
             if right.value == 0:
                 raise Exception("[Semantic] Division by zero")
+            if result_is_float:
+                return Variable(float(left.value) / float(right.value), "f64")
             return Variable(left.value // right.value, "i32")
         if self.value == "&&":
             if left.type != "bool" or right.type != "bool":
@@ -131,17 +146,19 @@ class BinOp(Node):
                 raise Exception("[Semantic] Invalid '||' operands")
             return Variable(left.value or right.value, "bool")
         if self.value == "==":
+            if left_is_num and right_is_num:
+                return Variable(left.value == right.value, "bool")
             if left.type != right.type:
                 raise Exception("[Semantic] Invalid '==' operands")
             return Variable(left.value == right.value, "bool")
         if self.value == ">":
-            if left.type == "i32" and right.type == "i32":
+            if left_is_num and right_is_num:
                 return Variable(left.value > right.value, "bool")
             if left.type == "str" and right.type == "str":
                 return Variable(left.value > right.value, "bool")
             raise Exception("[Semantic] Invalid '>' operands")
         if self.value == "<":
-            if left.type == "i32" and right.type == "i32":
+            if left_is_num and right_is_num:
                 return Variable(left.value < right.value, "bool")
             if left.type == "str" and right.type == "str":
                 return Variable(left.value < right.value, "bool")
@@ -173,8 +190,21 @@ class VarDec(Node):
                 raise Exception("[Semantic] Type mismatch in declaration")
             st.create_variable(identifier, Variable(init_val.value, variable_type, mutable))
             return
-        default_map = {"i32": 0, "bool": False, "str": ""}
+        default_map = {"i32": 0, "f64": 0.0, "bool": False, "str": ""}
         st.create_variable(identifier, Variable(default_map[variable_type], variable_type, mutable))
+
+
+class Cast(Node):
+    def evaluate(self, st):
+        target_type = self.value
+        value = self.children[0].evaluate(st)
+        if value.type not in ("i32", "f64"):
+            raise Exception("[Semantic] Cast supports only i32/f64")
+        if target_type == "i32":
+            return Variable(int(round(float(value.value))), "i32")
+        if target_type == "f64":
+            return Variable(float(value.value), "f64")
+        raise Exception("[Semantic] Invalid cast target type")
 
 
 class Print(Node):
@@ -222,6 +252,10 @@ class Read(Node):
             return Variable(True, "bool")
         if raw == "false":
             return Variable(False, "bool")
+        if raw.count(".") == 1:
+            left, right = raw.split(".")
+            if (left == "" or left == "-" or left.lstrip("-").isdigit()) and right.isdigit():
+                return Variable(float(raw), "f64")
         if raw.lstrip("-").isdigit():
             return Variable(int(raw), "i32")
         return Variable(raw, "str")
@@ -244,6 +278,7 @@ class Lexer:
         "mut": "MUT",
         "str": "TYPE",
         "i32": "TYPE",
+        "f64": "TYPE",
         "bool": "TYPE",
         "true": "BOOL",
         "false": "BOOL",
@@ -336,6 +371,16 @@ class Lexer:
             while self.position < n and s[self.position].isdigit():
                 num += s[self.position]
                 self.position += 1
+            if self.position < n and s[self.position] == '.':
+                num += s[self.position]
+                self.position += 1
+                if self.position >= n or not s[self.position].isdigit():
+                    raise Exception("[Lexer] Invalid float")
+                while self.position < n and s[self.position].isdigit():
+                    num += s[self.position]
+                    self.position += 1
+                self.next = Token("FLOAT", float(num))
+                return
             self.next = Token("INT", int(num))
             return
 
@@ -603,6 +648,10 @@ class Parser:
             Parser.lexer.select_next()
             return IntVal(tok.value)
 
+        if tok.type == "FLOAT":
+            Parser.lexer.select_next()
+            return FloatVal(tok.value)
+
         if tok.type == "BOOL":
             Parser.lexer.select_next()
             return BoolVal(tok.value == "true")
@@ -617,6 +666,15 @@ class Parser:
 
         if tok.type == "LPAREN":
             Parser.lexer.select_next()
+            if Parser.lexer.next.type == "TYPE":
+                target_type = Parser.lexer.next.value
+                if target_type not in ("i32", "f64"):
+                    raise Exception("[Semantic] Cast supports only i32/f64")
+                Parser.lexer.select_next()
+                if Parser.lexer.next.type != "RPAREN":
+                    raise Exception("[Parser] Expected ')'")
+                Parser.lexer.select_next()
+                return Cast(target_type, [Parser.parse_factor()])
             node = Parser.parse_bool_expression()
             if Parser.lexer.next.type != "RPAREN":
                 raise Exception("[Parser] Missing )")
