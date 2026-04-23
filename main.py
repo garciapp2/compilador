@@ -99,14 +99,14 @@ class Node(ABC):
     id = 0
 
     @staticmethod
-    def newId():
+    def new_id():
         Node.id += 1
         return Node.id
 
     def __init__(self, value, children=None):
         self.value = value
         self.children = children or []
-        self.id = Node.newId()
+        self.id = Node.new_id()
 
     @abstractmethod
     def evaluate(self, st):
