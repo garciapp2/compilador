@@ -706,10 +706,30 @@ class Parser:
 
         params = []
         if Parser.lexer.next.type == "IDEN":
-            params.append(Parser._parse_param())
+            param_name = Identifier(Parser.lexer.next.value)
+            Parser.lexer.select_next()
+            if Parser.lexer.next.type != "COLON":
+                raise Exception("[Parser] Expected ':' after parameter name")
+            Parser.lexer.select_next()
+            if Parser.lexer.next.type != "TYPE":
+                raise Exception("[Parser] Expected parameter type")
+            param_type = Parser.lexer.next.value
+            Parser.lexer.select_next()
+            params.append(VarDec({"type": param_type, "mutable": True}, [param_name]))
             while Parser.lexer.next.type == "COMMA":
                 Parser.lexer.select_next()
-                params.append(Parser._parse_param())
+                if Parser.lexer.next.type != "IDEN":
+                    raise Exception("[Parser] Expected parameter name")
+                param_name = Identifier(Parser.lexer.next.value)
+                Parser.lexer.select_next()
+                if Parser.lexer.next.type != "COLON":
+                    raise Exception("[Parser] Expected ':' after parameter name")
+                Parser.lexer.select_next()
+                if Parser.lexer.next.type != "TYPE":
+                    raise Exception("[Parser] Expected parameter type")
+                param_type = Parser.lexer.next.value
+                Parser.lexer.select_next()
+                params.append(VarDec({"type": param_type, "mutable": True}, [param_name]))
 
         if Parser.lexer.next.type != "RPAREN":
             raise Exception("[Parser] Expected ')' after function parameters")
@@ -732,21 +752,6 @@ class Parser:
 
         body = Parser.parse_block()
         return FuncDec(return_type, [name_node] + params + [body])
-
-    @staticmethod
-    def _parse_param():
-        if Parser.lexer.next.type != "IDEN":
-            raise Exception("[Parser] Expected parameter name")
-        param_name = Identifier(Parser.lexer.next.value)
-        Parser.lexer.select_next()
-        if Parser.lexer.next.type != "COLON":
-            raise Exception("[Parser] Expected ':' after parameter name")
-        Parser.lexer.select_next()
-        if Parser.lexer.next.type != "TYPE":
-            raise Exception("[Parser] Expected parameter type")
-        param_type = Parser.lexer.next.value
-        Parser.lexer.select_next()
-        return VarDec({"type": param_type, "mutable": True}, [param_name])
 
     @staticmethod
     def parse_block():
