@@ -694,10 +694,17 @@ class Parser:
         return_type = None
         if Parser.lexer.next.type == "ARROW":
             Parser.lexer.select_next()
-            if Parser.lexer.next.type != "TYPE":
+            if Parser.lexer.next.type == "LPAREN":
+                Parser.lexer.select_next()
+                if Parser.lexer.next.type != "RPAREN":
+                    raise Exception("[Parser] Expected ')'")
+                Parser.lexer.select_next()
+                return_type = "unit"
+            elif Parser.lexer.next.type == "TYPE":
+                return_type = Parser.lexer.next.value
+                Parser.lexer.select_next()
+            else:
                 raise Exception("[Parser] Expected return type")
-            return_type = Parser.lexer.next.value
-            Parser.lexer.select_next()
 
         body = Parser.parse_block()
         return FuncDec(
