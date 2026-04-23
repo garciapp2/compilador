@@ -60,36 +60,46 @@ class Code:
 
 
 class Variable:
-    def __init__(self, value, type_, mutable=True, shift=0):
+    def __init__(self, value, type_, mutable=True, shift=0, is_function=False):
         self.value = value
         self.type = type_
         self.mutable = mutable
         self.shift = shift
+        self.is_function = is_function
 
 
 class SymbolTable:
-    def __init__(self):
+    def __init__(self, parent=None):
         self.table = {}
+        self.parent = parent
         self.next_shift = 0
 
     def get_value(self, name):
-        if name not in self.table:
-            raise Exception("[Semantic] Undefined variable")
-        return self.table[name]
+        if name in self.table:
+            return self.table[name]
+        if self.parent is not None:
+            return self.parent.get_value(name)
+        raise Exception("[Semantic] Undefined variable: " + str(name))
 
     def set_value(self, name, var):
-        if name not in self.table:
-            raise Exception("[Semantic] Variable not declared")
-        if not self.table[name].mutable:
-            raise Exception("[Semantic] Cannot assign immutable variable")
-        if self.table[name].type != var.type:
-            raise Exception("[Semantic] Type mismatch in assignment")
-        var.shift = self.table[name].shift
-        self.table[name] = var
+        if name in self.table:
+            if self.table[name].is_function:
+                raise Exception("[Semantic] Cannot reassign function: " + str(name))
+            if not self.table[name].mutable:
+                raise Exception("[Semantic] Cannot assign immutable variable: " + str(name))
+            if self.table[name].type != var.type:
+                raise Exception("[Semantic] Type mismatch in assignment")
+            var.shift = self.table[name].shift
+            self.table[name] = var
+            return
+        if self.parent is not None:
+            self.parent.set_value(name, var)
+            return
+        raise Exception("[Semantic] Variable not declared: " + str(name))
 
     def create_variable(self, name, var):
         if name in self.table:
-            raise Exception("[Semantic] Variable already declared")
+            raise Exception("[Semantic] Variable already declared: " + str(name))
         self.next_shift += 4
         var.shift = self.next_shift
         self.table[name] = var
@@ -261,10 +271,9 @@ class Identifier(Node):
 class Assignment(Node):
     def evaluate(self, st):
         new_value = self.children[1].evaluate(st)
-        if self.children[0].value not in st.table:
-            st.create_variable(self.children[0].value, Variable(new_value.value, new_value.type, True))
-            return
-        st.set_value(self.children[0].value, Variable(new_value.value, new_value.type, st.get_value(self.children[0].value).mutable))
+        name = self.children[0].value
+        existing = st.get_value(name)
+        st.set_value(name, Variable(new_value.value, new_value.type, existing.mutable))
 
     def generate(self, st):
         name = self.children[0].value
@@ -284,10 +293,10 @@ class VarDec(Node):
             init_val = self.children[1].evaluate(st)
             if init_val.type != variable_type:
                 raise Exception("[Semantic] Type mismatch in declaration")
-            st.create_variable(identifier, Variable(init_val.value, variable_type, mutable))
+            st.create_variable(identifier, Variable(init_val.value, variable_type, mutable, is_function=False))
             return
         default_map = {"i32": 0, "bool": False, "str": ""}
-        st.create_variable(identifier, Variable(default_map[variable_type], variable_type, mutable))
+        st.create_variable(identifier, Variable(default_map[variable_type], variable_type, mutable, is_function=False))
 
     def generate(self, st):
         name = self.children[0].value
@@ -324,11 +333,32 @@ class Print(Node):
 class Block(Node):
     def evaluate(self, st):
         for child in self.children:
+            if isinstance(child, Return):
+                return child.evaluate(st)
+            if isinstance(child, Block):
+                inner_st = SymbolTable(parent=st)
+                result = child.evaluate(inner_st)
+                if result is not None:
+                    return result
+                continue
+            if isinstance(child, (If, While)):
+                result = child.evaluate(st)
+                if result is not None:
+                    return result
+                continue
             child.evaluate(st)
+        return None
 
     def generate(self, st):
         for child in self.children:
             child.generate(st)
+
+
+def _evaluate_branch(branch, st):
+    if isinstance(branch, Block):
+        inner_st = SymbolTable(parent=st)
+        return branch.evaluate(inner_st)
+    return branch.evaluate(st)
 
 
 class If(Node):
@@ -337,9 +367,9 @@ class If(Node):
         if condition.type != "bool":
             raise Exception("[Semantic] If condition must be bool")
         if condition.value:
-            return self.children[1].evaluate(st)
+            return _evaluate_branch(self.children[1], st)
         elif len(self.children) == 3:
-            return self.children[2].evaluate(st)
+            return _evaluate_branch(self.children[2], st)
         return None
 
     def generate(self, st):
@@ -367,7 +397,10 @@ class While(Node):
                 raise Exception("[Semantic] While condition must be bool")
             if not cond.value:
                 break
-            self.children[1].evaluate(st)
+            result = _evaluate_branch(self.children[1], st)
+            if result is not None:
+                return result
+        return None
 
     def generate(self, st):
         loop_label = f"loop_{self.id}"
@@ -400,6 +433,102 @@ class Read(Node):
         Code.append("  mov eax, dword [scan_int]")
 
 
+class Return(Node):
+    def evaluate(self, st):
+        value = self.children[0].evaluate(st)
+        return value
+
+    def generate(self, st):
+        pass
+
+
+class FuncDec(Node):
+    def evaluate(self, st):
+        root = st
+        while root.parent is not None:
+            root = root.parent
+        name = self.children[0].value
+        root.create_variable(
+            name,
+            Variable(self, self.value, mutable=False, is_function=True),
+        )
+
+    def generate(self, st):
+        pass
+
+
+class FuncCall(Node):
+    def evaluate(self, st):
+        try:
+            func_var = st.get_value(self.value)
+        except Exception:
+            raise Exception("[Semantic] Function not declared: " + str(self.value))
+        if not func_var.is_function:
+            raise Exception("[Semantic] " + str(self.value) + " is not a function")
+
+        func_dec = func_var.value
+        return_type = func_var.type
+        params = func_dec.children[1:-1]
+        body = func_dec.children[-1]
+
+        if len(self.children) != len(params):
+            raise Exception(
+                "[Semantic] Function "
+                + str(self.value)
+                + " expected "
+                + str(len(params))
+                + " arguments, got "
+                + str(len(self.children))
+            )
+
+        root = st
+        while root.parent is not None:
+            root = root.parent
+        new_st = SymbolTable(parent=root)
+
+        for i, param in enumerate(params):
+            param_name = param.children[0].value
+            param_type = param.value["type"]
+            arg_value = self.children[i].evaluate(st)
+            if arg_value.type != param_type:
+                raise Exception(
+                    "[Semantic] Argument '"
+                    + str(param_name)
+                    + "' of function '"
+                    + str(self.value)
+                    + "' expected "
+                    + str(param_type)
+                    + ", got "
+                    + str(arg_value.type)
+                )
+            new_st.create_variable(
+                param_name,
+                Variable(arg_value.value, param_type, mutable=True, is_function=False),
+            )
+
+        result = body.evaluate(new_st)
+
+        if return_type == "unit":
+            return None
+        if result is None:
+            raise Exception(
+                "[Semantic] Function '" + str(self.value) + "' did not return a value"
+            )
+        if result.type != return_type:
+            raise Exception(
+                "[Semantic] Function '"
+                + str(self.value)
+                + "' return type mismatch: expected "
+                + str(return_type)
+                + ", got "
+                + str(result.type)
+            )
+        return result
+
+    def generate(self, st):
+        pass
+
+
 class NoOp(Node):
     def evaluate(self, st):
         pass
@@ -418,6 +547,8 @@ class Lexer:
         "for": "FOR",
         "let": "LET",
         "mut": "MUT",
+        "fn": "FUNC",
+        "return": "RETURN",
         "str": "TYPE",
         "i32": "TYPE",
         "bool": "TYPE",
@@ -488,6 +619,16 @@ class Lexer:
             self.position += 1
             return
 
+        if c == ',':
+            self.next = Token("COMMA", ",")
+            self.position += 1
+            return
+
+        if c == '-' and self.position + 1 < n and s[self.position + 1] == '>':
+            self.next = Token("ARROW", "->")
+            self.position += 2
+            return
+
         if c == '"':
             self.position += 1
             text = ""
@@ -539,8 +680,73 @@ class Parser:
     def parse_program():
         stmts = []
         while Parser.lexer.next.type != "EOF":
-            stmts.append(Parser.parse_statement())
+            if Parser.lexer.next.type == "FUNC":
+                stmts.append(Parser.parse_func_declaration())
+            elif Parser.lexer.next.type == "LET":
+                stmts.append(Parser.parse_statement())
+            else:
+                raise Exception(
+                    "[Parser] Expected function or variable declaration at top level"
+                )
+        stmts.append(FuncCall("main", []))
         return Block(None, stmts)
+
+    @staticmethod
+    def parse_func_declaration():
+        if Parser.lexer.next.type != "FUNC":
+            raise Exception("[Parser] Expected 'fn'")
+        Parser.lexer.select_next()
+        if Parser.lexer.next.type != "IDEN":
+            raise Exception("[Parser] Expected function name")
+        name_node = Identifier(Parser.lexer.next.value)
+        Parser.lexer.select_next()
+        if Parser.lexer.next.type != "LPAREN":
+            raise Exception("[Parser] Expected '(' after function name")
+        Parser.lexer.select_next()
+
+        params = []
+        if Parser.lexer.next.type == "IDEN":
+            params.append(Parser._parse_param())
+            while Parser.lexer.next.type == "COMMA":
+                Parser.lexer.select_next()
+                params.append(Parser._parse_param())
+
+        if Parser.lexer.next.type != "RPAREN":
+            raise Exception("[Parser] Expected ')' after function parameters")
+        Parser.lexer.select_next()
+
+        return_type = "unit"
+        if Parser.lexer.next.type == "ARROW":
+            Parser.lexer.select_next()
+            if Parser.lexer.next.type == "TYPE":
+                return_type = Parser.lexer.next.value
+                Parser.lexer.select_next()
+            elif Parser.lexer.next.type == "LPAREN":
+                Parser.lexer.select_next()
+                if Parser.lexer.next.type != "RPAREN":
+                    raise Exception("[Parser] Expected ')' for unit return type")
+                Parser.lexer.select_next()
+                return_type = "unit"
+            else:
+                raise Exception("[Parser] Expected return type after '->'")
+
+        body = Parser.parse_block()
+        return FuncDec(return_type, [name_node] + params + [body])
+
+    @staticmethod
+    def _parse_param():
+        if Parser.lexer.next.type != "IDEN":
+            raise Exception("[Parser] Expected parameter name")
+        param_name = Identifier(Parser.lexer.next.value)
+        Parser.lexer.select_next()
+        if Parser.lexer.next.type != "COLON":
+            raise Exception("[Parser] Expected ':' after parameter name")
+        Parser.lexer.select_next()
+        if Parser.lexer.next.type != "TYPE":
+            raise Exception("[Parser] Expected parameter type")
+        param_type = Parser.lexer.next.value
+        Parser.lexer.select_next()
+        return VarDec({"type": param_type, "mutable": True}, [param_name])
 
     @staticmethod
     def parse_block():
@@ -660,13 +866,38 @@ class Parser:
             return Parser.parse_block()
 
         if tok.type == "IDEN":
-            iden = Identifier(tok.value)
+            name = tok.value
             Parser.lexer.select_next()
+            if Parser.lexer.next.type == "LPAREN":
+                Parser.lexer.select_next()
+                args = []
+                if Parser.lexer.next.type != "RPAREN":
+                    args.append(Parser.parse_bool_expression())
+                    while Parser.lexer.next.type == "COMMA":
+                        Parser.lexer.select_next()
+                        args.append(Parser.parse_bool_expression())
+                if Parser.lexer.next.type != "RPAREN":
+                    raise Exception("[Parser] Expected ')' after arguments")
+                Parser.lexer.select_next()
+                node = FuncCall(name, args)
+                if Parser.lexer.next.type != "END":
+                    raise Exception("[Parser] Expected ';'")
+                Parser.lexer.select_next()
+                return node
             if Parser.lexer.next.type != "ASSIGN":
-                raise Exception("[Parser] Expected '='")
+                raise Exception("[Parser] Expected '=' or '(' after identifier")
             Parser.lexer.select_next()
             expr = Parser.parse_bool_expression()
-            node = Assignment(None, [iden, expr])
+            node = Assignment(None, [Identifier(name), expr])
+            if Parser.lexer.next.type != "END":
+                raise Exception("[Parser] Expected ';'")
+            Parser.lexer.select_next()
+            return node
+
+        if tok.type == "RETURN":
+            Parser.lexer.select_next()
+            expr = Parser.parse_bool_expression()
+            node = Return(None, [expr])
             if Parser.lexer.next.type != "END":
                 raise Exception("[Parser] Expected ';'")
             Parser.lexer.select_next()
@@ -788,8 +1019,21 @@ class Parser:
             return StringVal(tok.value)
 
         if tok.type == "IDEN":
+            name = tok.value
             Parser.lexer.select_next()
-            return Identifier(tok.value)
+            if Parser.lexer.next.type == "LPAREN":
+                Parser.lexer.select_next()
+                args = []
+                if Parser.lexer.next.type != "RPAREN":
+                    args.append(Parser.parse_bool_expression())
+                    while Parser.lexer.next.type == "COMMA":
+                        Parser.lexer.select_next()
+                        args.append(Parser.parse_bool_expression())
+                if Parser.lexer.next.type != "RPAREN":
+                    raise Exception("[Parser] Expected ')' after arguments")
+                Parser.lexer.select_next()
+                return FuncCall(name, args)
+            return Identifier(name)
 
         if tok.type == "LPAREN":
             Parser.lexer.select_next()
@@ -832,10 +1076,7 @@ def main():
     code = PrePro.filter(code + "\n")
     tree = Parser.run(code)
     st = SymbolTable()
-    tree.generate(st)
-
-    output_path = source_path.rsplit('.', 1)[0] + '.asm'
-    Code.dump(output_path)
+    tree.evaluate(st)
 
 
 if __name__ == "__main__":

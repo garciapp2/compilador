@@ -4,27 +4,50 @@
 
 ![Diagrama do compilador](diagrama2.png)
 
-## EBNF
+## EBNF (Final - Roteiro 9)
 
 ```ebnf
-PROGRAM = { STATEMENT } ;
+PROGRAM = { FUNCDEC | VARDEC } ;
+FUNCDEC = "fn", IDENTIFIER, "(", ( | IDENTIFIER, ":", TYPE, { ",", IDENTIFIER, ":", TYPE } ), ")", ( "->", (TYPE | "(", ")") | ), BLOCK ;
+VARDEC = "let", "mut", IDENTIFIER, ":", TYPE, ( | "=", BOOLEXPRESSION ), ";" ;
 BLOCK = "{", { STATEMENT }, "}" ;
-STATEMENT = ((LET, (MUT | ε), IDENTIFIER, ":", TYPE, ("=", BOOLEXPRESSION | ε)) | (IF, "(", BOOLEXPRESSION, ")", STATEMENT, ("ELSE", STATEMENT) | ε) | (WHILE, "(", BOOLEXPRESSION, ")", STATEMENT) | (FOR, "(", IDENTIFIER, "=", BOOLEXPRESSION, ";", BOOLEXPRESSION, ";", IDENTIFIER, "=", BOOLEXPRESSION, ")", STATEMENT) | (IDENTIFIER, "=", BOOLEXPRESSION) | (PRINT, "(", BOOLEXPRESSION, ")") | BLOCK | ε), EOL ;
+STATEMENT = ( | (IDENTIFIER, ("=", BOOLEXPRESSION | "(", (BOOLEXPRESSION, { ",", BOOLEXPRESSION } | ), ")")) | ("println!", "(", BOOLEXPRESSION, ")") | "return", BOOLEXPRESSION | ), ";" | ("if", "(", BOOLEXPRESSION, ")", STATEMENT, ( | "ELSE", STATEMENT)) | ("while", "(", BOOLEXPRESSION, ")", STATEMENT) | VARDEC | BLOCK ;
 BOOLEXPRESSION = BOOLTERM, { "||", BOOLTERM } ;
 BOOLTERM = RELEXPRESSION, { "&&", RELEXPRESSION } ;
 RELEXPRESSION = EXPRESSION, { ("==" | "<" | ">"), EXPRESSION } ;
 EXPRESSION = TERM, { ("+" | "-"), TERM } ;
 TERM = FACTOR, { ("*" | "/"), FACTOR } ;
-IFEXPRESSION = IF, BOOLEXPRESSION, "{", BOOLEXPRESSION, "}", ELSE, "{", BOOLEXPRESSION, "}" ;
-FACTOR = IFEXPRESSION | ("+" | "-" | "!"), FACTOR | "(", BOOLEXPRESSION, ")" | NUMBER | BOOL | STRING | IDENTIFIER | READ, "(", ")" ;
+FACTOR = NUMBER | STRING | BOOLEAN | IDENTIFIER, ("(", (BOOLEXPRESSION, { ",", BOOLEXPRESSION } | ), ")" | ) | ("+" | "-" | "!"), FACTOR | "(", BOOLEXPRESSION, ")" | "readln!", "(", ")" ;
+TYPE = "i32" | "str" | "bool" ;
 NUMBER = DIGIT, { DIGIT } ;
-DIGIT = 0 | 1 | ... | 9 ;
 IDENTIFIER = LETTER, { LETTER | DIGIT | "_" } ;
-LETTER = a | b | ... | z | A | B | ... | Z ;
-BOOL = "true" | "false" ;
-TYPE = "i32" | "bool" | "str" ;
-STRING = "\"", { CHAR }, "\"" ;
+STRING = '"..."' ;
+DIGIT = "0" | "..." | "9" ;
+LETTER = "a" | "..." | "z" | "A" | "..." | "Z" ;
+BOOLEAN = "true" | "false" ;
 ```
+
+## Funcoes (Roteiro 9)
+
+- Declaracao com `fn nome(param:tipo, ...) -> tipo { ... }` (tipo de retorno opcional, padrao `unit`).
+- `return EXPR;` encerra a funcao devolvendo o valor ao chamador.
+- Chamada: `nome(arg1, arg2, ...)` tanto como statement quanto dentro de expressoes.
+- Variaveis globais declaradas no topo do arquivo ficam acessiveis a todas as funcoes.
+- Escopo: cada bloco `{ ... }` abre um novo escopo encadeado; a chamada de funcao cria um escopo filho do escopo global (sem acesso ao escopo do chamador).
+- Recursao e suportada (ver `test_recursive.rs`, `test_extra.rs`).
+
+## Base de Testes (Roteiro 9)
+
+Testes com sucesso:
+- `test_example.rs` - exemplo do enunciado (imprime 7, 7, 3, 5).
+- `test_recursive.rs` - recursao (fatorial, fibonacci, string params).
+- `test_extra.rs` - recursao mutual-like, while retornando valor via return, potencia.
+
+Testes de erro:
+- `test_err_argcount.rs` - numero incorreto de argumentos.
+- `test_err_argtype.rs` - tipos incompativeis nos argumentos.
+- `test_err_nofunc.rs` - chamada para funcao nao declarada.
+- `test_err_scope.rs` - uso de variavel fora do escopo.
 
 ## Base de Testes Sugerida (Roteiro 7)
 
