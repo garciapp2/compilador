@@ -15,16 +15,62 @@ class PrePro:
         return re.sub(r'//[^\n]*', '', code)
 
 
+class Code:
+    instructions = []
+
+    @staticmethod
+    def append(code):
+        Code.instructions.append(code)
+
+    @staticmethod
+    def dump(filename):
+        header = (
+            'section .data\n'
+            '  format_out: db "%d", 10, 0\n'
+            '  format_in: db "%d", 0\n'
+            '  scan_int: dd 0\n'
+            '\n'
+            'section .text\n'
+            '  extern printf\n'
+            '  extern scanf\n'
+            '  global _start\n'
+            '\n'
+            '_start:\n'
+            '  push ebp\n'
+            '  mov ebp, esp\n'
+            '\n'
+            '  ; aqui comeca o codigo gerado:\n'
+        )
+        footer = (
+            '\n'
+            '\n'
+            '  ; aqui termina o codigo gerado\n'
+            '\n'
+            '  mov esp, ebp\n'
+            '  pop ebp\n'
+            '\n'
+            '  mov eax, 1\n'
+            '  xor ebx, ebx\n'
+            '  int 0x80\n'
+        )
+        with open(filename, 'w') as file:
+            file.write(header)
+            file.write("\n".join(Code.instructions))
+            file.write(footer)
+
+
 class Variable:
-    def __init__(self, value, type_, mutable=True):
+    def __init__(self, value, type_, mutable=True, shift=0):
         self.value = value
         self.type = type_
         self.mutable = mutable
+        self.shift = shift
 
 
 class SymbolTable:
     def __init__(self):
         self.table = {}
+        self.next_shift = 0
 
     def get_value(self, name):
         if name not in self.table:
@@ -38,21 +84,35 @@ class SymbolTable:
             raise Exception("[Semantic] Cannot assign immutable variable")
         if self.table[name].type != var.type:
             raise Exception("[Semantic] Type mismatch in assignment")
+        var.shift = self.table[name].shift
         self.table[name] = var
 
     def create_variable(self, name, var):
         if name in self.table:
             raise Exception("[Semantic] Variable already declared")
+        self.next_shift += 4
+        var.shift = self.next_shift
         self.table[name] = var
 
 
 class Node(ABC):
+    id = 0
+
+    @staticmethod
+    def newId():
+        Node.id += 1
+        return Node.id
+
     def __init__(self, value, children=None):
         self.value = value
         self.children = children or []
+        self.id = Node.newId()
 
     @abstractmethod
     def evaluate(self, st):
+        pass
+
+    def generate(self, st):
         pass
 
 
@@ -60,15 +120,24 @@ class IntVal(Node):
     def evaluate(self, st):
         return Variable(self.value, "i32")
 
+    def generate(self, st):
+        Code.append(f"  mov eax, {self.value}")
+
 
 class BoolVal(Node):
     def evaluate(self, st):
         return Variable(self.value, "bool")
 
+    def generate(self, st):
+        Code.append(f"  mov eax, {1 if self.value else 0}")
+
 
 class StringVal(Node):
     def evaluate(self, st):
         return Variable(self.value, "str")
+
+    def generate(self, st):
+        pass
 
 
 def variable_to_string(var):
@@ -92,6 +161,13 @@ class UnOp(Node):
             if val.type != "bool":
                 raise Exception("[Semantic] Unary '!' requires bool")
             return Variable(not val.value, "bool")
+
+    def generate(self, st):
+        self.children[0].generate(st)
+        if self.value == "-":
+            Code.append("  neg eax")
+        elif self.value == "!":
+            Code.append("  xor eax, 1")
 
 
 class BinOp(Node):
@@ -147,10 +223,39 @@ class BinOp(Node):
                 return Variable(left.value < right.value, "bool")
             raise Exception("[Semantic] Invalid '<' operands")
 
+    def generate(self, st):
+        self.children[1].generate(st)
+        Code.append("  push eax")
+        self.children[0].generate(st)
+        Code.append("  pop ecx")
+        if self.value == "+":
+            Code.append("  add eax, ecx")
+        elif self.value == "-":
+            Code.append("  sub eax, ecx")
+        elif self.value == "*":
+            Code.append("  imul ecx")
+        elif self.value == "/":
+            Code.append("  cdq")
+            Code.append("  idiv ecx")
+        elif self.value == "&&":
+            Code.append("  and eax, ecx")
+        elif self.value == "||":
+            Code.append("  or eax, ecx")
+        elif self.value in ("==", ">", "<"):
+            cmov = {"==": "cmove", ">": "cmovg", "<": "cmovl"}[self.value]
+            Code.append("  cmp eax, ecx")
+            Code.append("  mov eax, 0")
+            Code.append("  mov ecx, 1")
+            Code.append(f"  {cmov} eax, ecx")
+
 
 class Identifier(Node):
     def evaluate(self, st):
         return st.get_value(self.value)
+
+    def generate(self, st):
+        var = st.get_value(self.value)
+        Code.append(f"  mov eax, [ebp-{var.shift}]")
 
 
 class Assignment(Node):
@@ -160,6 +265,14 @@ class Assignment(Node):
             st.create_variable(self.children[0].value, Variable(new_value.value, new_value.type, True))
             return
         st.set_value(self.children[0].value, Variable(new_value.value, new_value.type, st.get_value(self.children[0].value).mutable))
+
+    def generate(self, st):
+        name = self.children[0].value
+        var = st.get_value(name)
+        if var.type == "str":
+            return
+        self.children[1].generate(st)
+        Code.append(f"  mov [ebp-{var.shift}], eax")
 
 
 class VarDec(Node):
@@ -176,6 +289,19 @@ class VarDec(Node):
         default_map = {"i32": 0, "bool": False, "str": ""}
         st.create_variable(identifier, Variable(default_map[variable_type], variable_type, mutable))
 
+    def generate(self, st):
+        name = self.children[0].value
+        var_type = self.value["type"]
+        mutable = self.value["mutable"]
+        if var_type == "str":
+            return
+        Code.append(f"  sub esp, 4 ; var {name} {var_type}")
+        st.create_variable(name, Variable(0, var_type, mutable))
+        if len(self.children) == 2:
+            self.children[1].generate(st)
+            var = st.get_value(name)
+            Code.append(f"  mov [ebp-{var.shift}], eax")
+
 
 class Print(Node):
     def evaluate(self, st):
@@ -185,11 +311,24 @@ class Print(Node):
             return
         print(value.value)
 
+    def generate(self, st):
+        if isinstance(self.children[0], StringVal):
+            return
+        self.children[0].generate(st)
+        Code.append("  push eax")
+        Code.append("  push format_out")
+        Code.append("  call printf")
+        Code.append("  add esp, 8")
+
 
 class Block(Node):
     def evaluate(self, st):
         for child in self.children:
             child.evaluate(st)
+
+    def generate(self, st):
+        for child in self.children:
+            child.generate(st)
 
 
 class If(Node):
@@ -203,6 +342,22 @@ class If(Node):
             return self.children[2].evaluate(st)
         return None
 
+    def generate(self, st):
+        else_label = f"else_{self.id}"
+        exit_label = f"exit_if_{self.id}"
+        self.children[0].generate(st)
+        Code.append("  cmp eax, 0")
+        if len(self.children) == 3:
+            Code.append(f"  je {else_label}")
+            self.children[1].generate(st)
+            Code.append(f"  jmp {exit_label}")
+            Code.append(f"{else_label}:")
+            self.children[2].generate(st)
+        else:
+            Code.append(f"  je {exit_label}")
+            self.children[1].generate(st)
+        Code.append(f"{exit_label}:")
+
 
 class While(Node):
     def evaluate(self, st):
@@ -213,6 +368,17 @@ class While(Node):
             if not cond.value:
                 break
             self.children[1].evaluate(st)
+
+    def generate(self, st):
+        loop_label = f"loop_{self.id}"
+        exit_label = f"exit_{self.id}"
+        Code.append(f"{loop_label}:")
+        self.children[0].generate(st)
+        Code.append("  cmp eax, 0")
+        Code.append(f"  je {exit_label}")
+        self.children[1].generate(st)
+        Code.append(f"  jmp {loop_label}")
+        Code.append(f"{exit_label}:")
 
 
 class Read(Node):
@@ -226,9 +392,19 @@ class Read(Node):
             return Variable(int(raw), "i32")
         return Variable(raw, "str")
 
+    def generate(self, st):
+        Code.append("  push scan_int")
+        Code.append("  push format_in")
+        Code.append("  call scanf")
+        Code.append("  add esp, 8")
+        Code.append("  mov eax, dword [scan_int]")
+
 
 class NoOp(Node):
     def evaluate(self, st):
+        pass
+
+    def generate(self, st):
         pass
 
 
@@ -649,13 +825,17 @@ def main():
     if len(sys.argv) != 2:
         raise Exception("[Parser] Usage: python main.py file.rs")
 
-    with open(sys.argv[1], 'r') as f:
+    source_path = sys.argv[1]
+    with open(source_path, 'r') as f:
         code = f.read()
 
     code = PrePro.filter(code + "\n")
     tree = Parser.run(code)
     st = SymbolTable()
-    tree.evaluate(st)
+    tree.generate(st)
+
+    output_path = source_path.rsplit('.', 1)[0] + '.asm'
+    Code.dump(output_path)
 
 
 if __name__ == "__main__":
