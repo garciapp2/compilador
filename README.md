@@ -27,6 +27,14 @@ LETTER = "a" | "..." | "z" | "A" | "..." | "Z" ;
 BOOLEAN = "true" | "false" ;
 ```
 
+## Structs (Extra Credit)
+
+- Declaracao no topo do arquivo: `struct Nome { let mut campo:tipo; ... }`.
+- Instanciacao: `let x:Nome;` (sem inicializacao na declaracao).
+- Acesso/atribuicao de campo: `x.campo = valor;` e `println!(x.campo);`.
+- Structs aninhadas: um campo pode ter outro struct como tipo; suas instancias sao criadas automaticamente.
+- Structs podem ser passadas como parametro de funcao (tipo = nome do struct).
+
 ## Funcoes (Roteiro 9)
 
 - Declaracao com `fn nome(param:tipo, ...) -> tipo { ... }` (tipo de retorno opcional, padrao `unit`).

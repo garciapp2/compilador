@@ -60,12 +60,13 @@ class Code:
 
 
 class Variable:
-    def __init__(self, value, type_, mutable=True, shift=0, is_function=False):
+    def __init__(self, value, type_, mutable=True, shift=0, is_function=False, is_struct=False):
         self.value = value
         self.type = type_
         self.mutable = mutable
         self.shift = shift
         self.is_function = is_function
+        self.is_struct = is_struct
 
 
 class SymbolTable:
@@ -271,7 +272,19 @@ class Identifier(Node):
 class Assignment(Node):
     def evaluate(self, st):
         new_value = self.children[1].evaluate(st)
-        name = self.children[0].value
+        lhs = self.children[0]
+        if isinstance(lhs, FieldAccess):
+            target_dict, field_name = lhs.resolve_target(st)
+            if field_name not in target_dict:
+                raise Exception("[Semantic] Field not found: " + str(field_name))
+            existing = target_dict[field_name]
+            if not existing.mutable:
+                raise Exception("[Semantic] Cannot assign to immutable field: " + str(field_name))
+            if existing.type != new_value.type:
+                raise Exception("[Semantic] Type mismatch in field assignment")
+            target_dict[field_name] = Variable(new_value.value, new_value.type, existing.mutable)
+            return
+        name = lhs.value
         existing = st.get_value(name)
         st.set_value(name, Variable(new_value.value, new_value.type, existing.mutable))
 
@@ -289,14 +302,26 @@ class VarDec(Node):
         identifier = self.children[0].value
         variable_type = self.value["type"]
         mutable = self.value["mutable"]
-        if len(self.children) == 2:
-            init_val = self.children[1].evaluate(st)
-            if init_val.type != variable_type:
-                raise Exception("[Semantic] Type mismatch in declaration")
-            st.create_variable(identifier, Variable(init_val.value, variable_type, mutable, is_function=False))
+        if variable_type in ("i32", "bool", "str"):
+            if len(self.children) == 2:
+                init_val = self.children[1].evaluate(st)
+                if init_val.type != variable_type:
+                    raise Exception("[Semantic] Type mismatch in declaration")
+                st.create_variable(identifier, Variable(init_val.value, variable_type, mutable, is_function=False))
+                return
+            default_map = {"i32": 0, "bool": False, "str": ""}
+            st.create_variable(identifier, Variable(default_map[variable_type], variable_type, mutable, is_function=False))
             return
-        default_map = {"i32": 0, "bool": False, "str": ""}
-        st.create_variable(identifier, Variable(default_map[variable_type], variable_type, mutable, is_function=False))
+        if len(self.children) == 2:
+            raise Exception("[Semantic] Struct variables cannot be initialized at declaration")
+        try:
+            struct_var = st.get_value(variable_type)
+        except Exception:
+            raise Exception("[Semantic] Unknown type: " + str(variable_type))
+        if not struct_var.is_struct:
+            raise Exception("[Semantic] " + str(variable_type) + " is not a type")
+        instance_dict = _create_struct_instance(struct_var.value, st)
+        st.create_variable(identifier, Variable(instance_dict, variable_type, mutable, is_function=False))
 
     def generate(self, st):
         name = self.children[0].value
@@ -529,6 +554,60 @@ class FuncCall(Node):
         pass
 
 
+def _create_struct_instance(struct_dec, st):
+    fields = {}
+    default_map = {"i32": 0, "bool": False, "str": ""}
+    for field in struct_dec.children:
+        field_name = field.children[0].value
+        field_type = field.value["type"]
+        field_mutable = field.value["mutable"]
+        if field_type in ("i32", "bool", "str"):
+            fields[field_name] = Variable(default_map[field_type], field_type, field_mutable)
+            continue
+        try:
+            nested_var = st.get_value(field_type)
+        except Exception:
+            raise Exception("[Semantic] Unknown type: " + str(field_type))
+        if not nested_var.is_struct:
+            raise Exception("[Semantic] " + str(field_type) + " is not a type")
+        nested_dict = _create_struct_instance(nested_var.value, st)
+        fields[field_name] = Variable(nested_dict, field_type, field_mutable)
+    return fields
+
+
+class StructDec(Node):
+    def evaluate(self, st):
+        root = st
+        while root.parent is not None:
+            root = root.parent
+        root.create_variable(
+            self.value,
+            Variable(self, self.value, mutable=False, is_function=False, is_struct=True),
+        )
+
+    def generate(self, st):
+        pass
+
+
+class FieldAccess(Node):
+    def evaluate(self, st):
+        obj = self.children[0].evaluate(st)
+        if not isinstance(obj.value, dict):
+            raise Exception("[Semantic] Cannot access field '" + str(self.value) + "' on non-struct value")
+        if self.value not in obj.value:
+            raise Exception("[Semantic] Field not found: " + str(self.value))
+        return obj.value[self.value]
+
+    def resolve_target(self, st):
+        obj = self.children[0].evaluate(st)
+        if not isinstance(obj.value, dict):
+            raise Exception("[Semantic] Cannot access field '" + str(self.value) + "' on non-struct value")
+        return obj.value, self.value
+
+    def generate(self, st):
+        pass
+
+
 class NoOp(Node):
     def evaluate(self, st):
         pass
@@ -549,6 +628,7 @@ class Lexer:
         "mut": "MUT",
         "fn": "FUNC",
         "return": "RETURN",
+        "struct": "STRUCT",
         "str": "TYPE",
         "i32": "TYPE",
         "bool": "TYPE",
@@ -629,6 +709,11 @@ class Lexer:
             self.position += 2
             return
 
+        if c == '.':
+            self.next = Token("DOT", ".")
+            self.position += 1
+            return
+
         if c == '"':
             self.position += 1
             text = ""
@@ -684,12 +769,55 @@ class Parser:
                 stmts.append(Parser.parse_func_declaration())
             elif Parser.lexer.next.type == "LET":
                 stmts.append(Parser.parse_statement())
+            elif Parser.lexer.next.type == "STRUCT":
+                stmts.append(Parser.parse_struct_declaration())
             else:
                 raise Exception(
-                    "[Parser] Expected function or variable declaration at top level"
+                    "[Parser] Expected function, struct or variable declaration at top level"
                 )
         stmts.append(FuncCall("main", []))
         return Block(None, stmts)
+
+    @staticmethod
+    def parse_struct_declaration():
+        if Parser.lexer.next.type != "STRUCT":
+            raise Exception("[Parser] Expected 'struct'")
+        Parser.lexer.select_next()
+        if Parser.lexer.next.type != "IDEN":
+            raise Exception("[Parser] Expected struct name")
+        struct_name = Parser.lexer.next.value
+        Parser.lexer.select_next()
+        if Parser.lexer.next.type != "OPEN_BRA":
+            raise Exception("[Parser] Expected '{' after struct name")
+        Parser.lexer.select_next()
+        fields = []
+        while Parser.lexer.next.type != "CLOSE_BRA":
+            if Parser.lexer.next.type == "EOF":
+                raise Exception("[Parser] Expected '}'")
+            if Parser.lexer.next.type != "LET":
+                raise Exception("[Parser] Expected 'let' for struct field")
+            Parser.lexer.select_next()
+            mutable = False
+            if Parser.lexer.next.type == "MUT":
+                mutable = True
+                Parser.lexer.select_next()
+            if Parser.lexer.next.type != "IDEN":
+                raise Exception("[Parser] Expected field name")
+            field_id = Identifier(Parser.lexer.next.value)
+            Parser.lexer.select_next()
+            if Parser.lexer.next.type != "COLON":
+                raise Exception("[Parser] Expected ':' after field name")
+            Parser.lexer.select_next()
+            if Parser.lexer.next.type not in ("TYPE", "IDEN"):
+                raise Exception("[Parser] Expected field type")
+            field_type = Parser.lexer.next.value
+            Parser.lexer.select_next()
+            if Parser.lexer.next.type != "END":
+                raise Exception("[Parser] Expected ';' after field declaration")
+            Parser.lexer.select_next()
+            fields.append(VarDec({"type": field_type, "mutable": mutable}, [field_id]))
+        Parser.lexer.select_next()
+        return StructDec(struct_name, fields)
 
     @staticmethod
     def parse_func_declaration():
@@ -711,7 +839,7 @@ class Parser:
             if Parser.lexer.next.type != "COLON":
                 raise Exception("[Parser] Expected ':' after parameter name")
             Parser.lexer.select_next()
-            if Parser.lexer.next.type != "TYPE":
+            if Parser.lexer.next.type not in ("TYPE", "IDEN"):
                 raise Exception("[Parser] Expected parameter type")
             param_type = Parser.lexer.next.value
             Parser.lexer.select_next()
@@ -725,7 +853,7 @@ class Parser:
                 if Parser.lexer.next.type != "COLON":
                     raise Exception("[Parser] Expected ':' after parameter name")
                 Parser.lexer.select_next()
-                if Parser.lexer.next.type != "TYPE":
+                if Parser.lexer.next.type not in ("TYPE", "IDEN"):
                     raise Exception("[Parser] Expected parameter type")
                 param_type = Parser.lexer.next.value
                 Parser.lexer.select_next()
@@ -783,7 +911,7 @@ class Parser:
             if Parser.lexer.next.type != "COLON":
                 raise Exception("[Parser] Expected ':'")
             Parser.lexer.select_next()
-            if Parser.lexer.next.type != "TYPE":
+            if Parser.lexer.next.type not in ("TYPE", "IDEN"):
                 raise Exception("[Parser] Expected type")
             declared_type = Parser.lexer.next.value
             Parser.lexer.select_next()
@@ -889,11 +1017,19 @@ class Parser:
                     raise Exception("[Parser] Expected ';'")
                 Parser.lexer.select_next()
                 return node
+            lhs = Identifier(name)
+            while Parser.lexer.next.type == "DOT":
+                Parser.lexer.select_next()
+                if Parser.lexer.next.type != "IDEN":
+                    raise Exception("[Parser] Expected field name after '.'")
+                field_name = Parser.lexer.next.value
+                Parser.lexer.select_next()
+                lhs = FieldAccess(field_name, [lhs])
             if Parser.lexer.next.type != "ASSIGN":
                 raise Exception("[Parser] Expected '=' or '(' after identifier")
             Parser.lexer.select_next()
             expr = Parser.parse_bool_expression()
-            node = Assignment(None, [Identifier(name), expr])
+            node = Assignment(None, [lhs, expr])
             if Parser.lexer.next.type != "END":
                 raise Exception("[Parser] Expected ';'")
             Parser.lexer.select_next()
@@ -1038,7 +1174,15 @@ class Parser:
                     raise Exception("[Parser] Expected ')' after arguments")
                 Parser.lexer.select_next()
                 return FuncCall(name, args)
-            return Identifier(name)
+            node = Identifier(name)
+            while Parser.lexer.next.type == "DOT":
+                Parser.lexer.select_next()
+                if Parser.lexer.next.type != "IDEN":
+                    raise Exception("[Parser] Expected field name after '.'")
+                field_name = Parser.lexer.next.value
+                Parser.lexer.select_next()
+                node = FieldAccess(field_name, [node])
+            return node
 
         if tok.type == "LPAREN":
             Parser.lexer.select_next()
