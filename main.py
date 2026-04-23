@@ -817,6 +817,8 @@ class Parser:
             Parser.lexer.select_next()
             fields.append(VarDec({"type": field_type, "mutable": mutable}, [field_id]))
         Parser.lexer.select_next()
+        if Parser.lexer.next.type == "END":
+            Parser.lexer.select_next()
         return StructDec(struct_name, fields)
 
     @staticmethod
