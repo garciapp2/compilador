@@ -17,14 +17,28 @@ class PrePro:
 
 class Code:
     instructions = []
+    functions = []
+    _in_function = False
 
     @staticmethod
     def append(code):
-        Code.instructions.append(code)
+        if Code._in_function:
+            Code.functions[-1].append(code)
+        else:
+            Code.instructions.append(code)
+
+    @staticmethod
+    def start_function():
+        Code.functions.append([])
+        Code._in_function = True
+
+    @staticmethod
+    def end_function():
+        Code._in_function = False
 
     @staticmethod
     def dump(filename):
-        header = (
+        data_section = (
             'section .data\n'
             '  format_out: db "%d", 10, 0\n'
             '  format_in: db "%d", 0\n'
@@ -35,13 +49,15 @@ class Code:
             '  extern scanf\n'
             '  global _start\n'
             '\n'
+        )
+        start_header = (
             '_start:\n'
             '  push ebp\n'
             '  mov ebp, esp\n'
             '\n'
             '  ; aqui comeca o codigo gerado:\n'
         )
-        footer = (
+        start_footer = (
             '\n'
             '\n'
             '  ; aqui termina o codigo gerado\n'
@@ -54,17 +70,31 @@ class Code:
             '  int 0x80\n'
         )
         with open(filename, 'w') as file:
-            file.write(header)
+            file.write(data_section)
+            for func in Code.functions:
+                file.write("\n".join(func))
+                file.write("\n\n")
+            file.write(start_header)
             file.write("\n".join(Code.instructions))
-            file.write(footer)
+            if "main" in FuncTable.table:
+                if Code.instructions:
+                    file.write("\n")
+                file.write("  call func_main")
+            file.write(start_footer)
 
 
 class Variable:
-    def __init__(self, value, type_, mutable=True, shift=0):
+    def __init__(self, value, type_, mutable=True, shift=0, is_param=False):
         self.value = value
         self.type = type_
         self.mutable = mutable
         self.shift = shift
+        self.is_param = is_param
+
+    def address(self):
+        if self.is_param:
+            return f"[ebp+{self.shift}]"
+        return f"[ebp-{self.shift}]"
 
 
 class SymbolTable:
@@ -85,6 +115,7 @@ class SymbolTable:
         if self.table[name].type != var.type:
             raise Exception("[Semantic] Type mismatch in assignment")
         var.shift = self.table[name].shift
+        var.is_param = self.table[name].is_param
         self.table[name] = var
 
     def create_variable(self, name, var):
@@ -92,7 +123,31 @@ class SymbolTable:
             raise Exception("[Semantic] Variable already declared")
         self.next_shift += 4
         var.shift = self.next_shift
+        var.is_param = False
         self.table[name] = var
+
+    def create_param(self, name, var, offset):
+        if name in self.table:
+            raise Exception("[Semantic] Parameter already declared")
+        var.shift = offset
+        var.is_param = True
+        self.table[name] = var
+
+
+class FuncTable:
+    table = {}
+
+    @staticmethod
+    def add(name, node):
+        if name in FuncTable.table:
+            raise Exception("[Semantic] Function already declared")
+        FuncTable.table[name] = node
+
+    @staticmethod
+    def get(name):
+        if name not in FuncTable.table:
+            raise Exception("[Semantic] Undefined function")
+        return FuncTable.table[name]
 
 
 class Node(ABC):
@@ -255,7 +310,7 @@ class Identifier(Node):
 
     def generate(self, st):
         var = st.get_value(self.value)
-        Code.append(f"  mov eax, [ebp-{var.shift}]")
+        Code.append(f"  mov eax, {var.address()}")
 
 
 class Assignment(Node):
@@ -272,7 +327,7 @@ class Assignment(Node):
         if var.type == "str":
             return
         self.children[1].generate(st)
-        Code.append(f"  mov [ebp-{var.shift}], eax")
+        Code.append(f"  mov {var.address()}, eax")
 
 
 class VarDec(Node):
@@ -300,7 +355,7 @@ class VarDec(Node):
         if len(self.children) == 2:
             self.children[1].generate(st)
             var = st.get_value(name)
-            Code.append(f"  mov [ebp-{var.shift}], eax")
+            Code.append(f"  mov {var.address()}, eax")
 
 
 class Print(Node):
@@ -408,6 +463,54 @@ class NoOp(Node):
         pass
 
 
+class FuncDec(Node):
+    def evaluate(self, st):
+        FuncTable.add(self.value["name"], self)
+
+    def generate(self, st):
+        FuncTable.add(self.value["name"], self)
+        func_st = SymbolTable()
+        offset = 8
+        for param_name, param_type in self.value["params"]:
+            func_st.create_param(param_name, Variable(0, param_type, True), offset)
+            offset += 4
+
+        Code.start_function()
+        Code.append(f"func_{self.value['name']}:")
+        Code.append("  push ebp")
+        Code.append("  mov ebp, esp")
+        self.children[0].generate(func_st)
+        Code.append("  mov esp, ebp")
+        Code.append("  pop ebp")
+        Code.append("  ret")
+        Code.end_function()
+
+
+class FuncCall(Node):
+    def evaluate(self, st):
+        raise Exception("[Semantic] Function calls not supported in interpreter")
+
+    def generate(self, st):
+        for arg in reversed(self.children):
+            arg.generate(st)
+            Code.append("  push eax")
+        Code.append(f"  call func_{self.value}")
+        if self.children:
+            Code.append(f"  add esp, {4 * len(self.children)}")
+
+
+class Return(Node):
+    def evaluate(self, st):
+        pass
+
+    def generate(self, st):
+        if self.children:
+            self.children[0].generate(st)
+        Code.append("  mov esp, ebp")
+        Code.append("  pop ebp")
+        Code.append("  ret")
+
+
 class Lexer:
     RESERVED = {
         "println!": "PRINT",
@@ -418,6 +521,8 @@ class Lexer:
         "for": "FOR",
         "let": "LET",
         "mut": "MUT",
+        "fn": "FN",
+        "return": "RETURN",
         "str": "TYPE",
         "i32": "TYPE",
         "bool": "TYPE",
@@ -488,6 +593,16 @@ class Lexer:
             self.position += 1
             return
 
+        if c == ',':
+            self.next = Token("COMMA", ",")
+            self.position += 1
+            return
+
+        if c == '-' and self.position + 1 < n and s[self.position + 1] == '>':
+            self.next = Token("ARROW", "->")
+            self.position += 2
+            return
+
         if c == '"':
             self.position += 1
             text = ""
@@ -539,8 +654,56 @@ class Parser:
     def parse_program():
         stmts = []
         while Parser.lexer.next.type != "EOF":
-            stmts.append(Parser.parse_statement())
+            if Parser.lexer.next.type == "FN":
+                stmts.append(Parser.parse_function_dec())
+            else:
+                stmts.append(Parser.parse_statement())
         return Block(None, stmts)
+
+    @staticmethod
+    def parse_function_dec():
+        Parser.lexer.select_next()
+        if Parser.lexer.next.type != "IDEN":
+            raise Exception("[Parser] Expected function name")
+        name = Parser.lexer.next.value
+        Parser.lexer.select_next()
+        if Parser.lexer.next.type != "LPAREN":
+            raise Exception("[Parser] Expected '('")
+        Parser.lexer.select_next()
+
+        params = []
+        while Parser.lexer.next.type != "RPAREN":
+            if Parser.lexer.next.type != "IDEN":
+                raise Exception("[Parser] Expected parameter name")
+            param_name = Parser.lexer.next.value
+            Parser.lexer.select_next()
+            if Parser.lexer.next.type != "COLON":
+                raise Exception("[Parser] Expected ':'")
+            Parser.lexer.select_next()
+            if Parser.lexer.next.type != "TYPE":
+                raise Exception("[Parser] Expected type")
+            param_type = Parser.lexer.next.value
+            Parser.lexer.select_next()
+            params.append((param_name, param_type))
+            if Parser.lexer.next.type == "COMMA":
+                Parser.lexer.select_next()
+            elif Parser.lexer.next.type != "RPAREN":
+                raise Exception("[Parser] Expected ',' or ')'")
+        Parser.lexer.select_next()
+
+        return_type = None
+        if Parser.lexer.next.type == "ARROW":
+            Parser.lexer.select_next()
+            if Parser.lexer.next.type != "TYPE":
+                raise Exception("[Parser] Expected return type")
+            return_type = Parser.lexer.next.value
+            Parser.lexer.select_next()
+
+        body = Parser.parse_block()
+        return FuncDec(
+            {"name": name, "params": params, "return_type": return_type},
+            [body],
+        )
 
     @staticmethod
     def parse_block():
@@ -659,9 +822,36 @@ class Parser:
         if tok.type == "OPEN_BRA":
             return Parser.parse_block()
 
-        if tok.type == "IDEN":
-            iden = Identifier(tok.value)
+        if tok.type == "RETURN":
             Parser.lexer.select_next()
+            if Parser.lexer.next.type == "END":
+                Parser.lexer.select_next()
+                return Return(None)
+            expr = Parser.parse_bool_expression()
+            if Parser.lexer.next.type != "END":
+                raise Exception("[Parser] Expected ';'")
+            Parser.lexer.select_next()
+            return Return(None, [expr])
+
+        if tok.type == "IDEN":
+            name = tok.value
+            Parser.lexer.select_next()
+            if Parser.lexer.next.type == "LPAREN":
+                Parser.lexer.select_next()
+                args = []
+                while Parser.lexer.next.type != "RPAREN":
+                    args.append(Parser.parse_bool_expression())
+                    if Parser.lexer.next.type == "COMMA":
+                        Parser.lexer.select_next()
+                    elif Parser.lexer.next.type != "RPAREN":
+                        raise Exception("[Parser] Expected ',' or ')'")
+                Parser.lexer.select_next()
+                node = FuncCall(name, args)
+                if Parser.lexer.next.type != "END":
+                    raise Exception("[Parser] Expected ';'")
+                Parser.lexer.select_next()
+                return node
+            iden = Identifier(name)
             if Parser.lexer.next.type != "ASSIGN":
                 raise Exception("[Parser] Expected '='")
             Parser.lexer.select_next()
@@ -788,8 +978,20 @@ class Parser:
             return StringVal(tok.value)
 
         if tok.type == "IDEN":
+            name = tok.value
             Parser.lexer.select_next()
-            return Identifier(tok.value)
+            if Parser.lexer.next.type == "LPAREN":
+                Parser.lexer.select_next()
+                args = []
+                while Parser.lexer.next.type != "RPAREN":
+                    args.append(Parser.parse_bool_expression())
+                    if Parser.lexer.next.type == "COMMA":
+                        Parser.lexer.select_next()
+                    elif Parser.lexer.next.type != "RPAREN":
+                        raise Exception("[Parser] Expected ',' or ')'")
+                Parser.lexer.select_next()
+                return FuncCall(name, args)
+            return Identifier(name)
 
         if tok.type == "LPAREN":
             Parser.lexer.select_next()
